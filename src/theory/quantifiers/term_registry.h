@@ -18,6 +18,7 @@
 #ifndef CVC5__THEORY__QUANTIFIERS__TERM_REGISTRY_H
 #define CVC5__THEORY__QUANTIFIERS__TERM_REGISTRY_H
 
+#include <cstdint>
 #include <map>
 #include <unordered_set>
 
@@ -76,6 +77,10 @@ class TermRegistry : protected EnvObj
    * Declare pool p with initial value initValue.
    */
   void declarePool(Node p, const std::vector<Node>& initValue);
+  /** Declare projection variable */
+  void declareProjVar(Node v);
+  /** Declare weight for variable */
+  void declareWeight(Node v, uint32_t weight);
   /**
    * Process instantiation, called when q is instantiated.
    *
@@ -150,6 +155,10 @@ class TermRegistry : protected EnvObj
   std::unique_ptr<BvInverter> d_bvInvert;
   /** extended model object */
   FirstOrderModel* d_qmodel;
+  /** projection variables */
+  std::vector<Node> d_projVars;
+  /** variable weights */
+  std::map<Node, uint32_t> d_varWeights;
 };
 
 }  // namespace quantifiers

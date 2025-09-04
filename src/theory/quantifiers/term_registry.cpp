@@ -121,6 +121,13 @@ void TermRegistry::declarePool(Node p, const std::vector<Node>& initValue)
   d_termPools->registerPool(p, initValue);
 }
 
+void TermRegistry::declareProjVar(Node v) { d_projVars.push_back(v); }
+
+void TermRegistry::declareWeight(Node v, uint32_t weight)
+{
+  d_varWeights[v] = weight;
+}
+
 void TermRegistry::processInstantiation(Node q,
                                         const std::vector<Node>& terms,
                                         bool success)

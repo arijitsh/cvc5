@@ -108,11 +108,9 @@ struct APIStatistics
 /* Kind                                                                       */
 /* -------------------------------------------------------------------------- */
 
-#define KIND_ENUM(external_name, internal_name)                              \
-  {                                                                          \
-    external_name,                                                           \
-        std::make_pair(internal_name, std::string(#external_name).substr(6)) \
-  }
+#define KIND_ENUM(external_name, internal_name) \
+  {external_name,                               \
+   std::make_pair(internal_name, std::string(#external_name).substr(6))}
 
 /* Mapping from external (API) kind to internal kind. */
 const static std::unordered_map<Kind, std::pair<internal::Kind, std::string>>
@@ -467,11 +465,9 @@ const static std::unordered_map<Kind, std::pair<internal::Kind, std::string>>
 /* SortKind                                                                   */
 /* -------------------------------------------------------------------------- */
 
-#define SORT_KIND_ENUM(external_name, internal_name)                          \
-  {                                                                           \
-    external_name,                                                            \
-        std::make_pair(internal_name, std::string(#external_name).substr(10)) \
-  }
+#define SORT_KIND_ENUM(external_name, internal_name) \
+  {external_name,                                    \
+   std::make_pair(internal_name, std::string(#external_name).substr(10))}
 
 /* Mapping from external (API) kind to internal kind. */
 const static std::unordered_map<SortKind,
@@ -8361,6 +8357,30 @@ Term Solver::declarePool(const std::string& symbol,
   CVC5_API_TRY_CATCH_END;
 }
 
+void Solver::declareProjVar(const std::vector<Term>& vars) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERMS(vars);
+  //////// all checks before this line
+  std::vector<internal::Node> nvars = Term::termVectorToNodes(vars);
+  for (const internal::Node& n : nvars)
+  {
+    d_slv->declareProjVar(n);
+  }
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+void Solver::declareWeight(const Term& var, uint32_t weight) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERM(var);
+  //////// all checks before this line
+  d_slv->declareWeight(*var.d_node, weight);
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
 Term Solver::declareOracleFun(
     const std::string& symbol,
     const std::vector<Sort>& sorts,
@@ -8579,6 +8599,157 @@ std::string Solver::getInstantiations() const
   std::stringstream ss;
   d_slv->printInstantiations(ss);
   return ss.str();
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+std::pair<std::vector<uint32_t>, std::unordered_map<uint32_t, Term>>
+Solver::getBooleanAbstraction(const Term& formula) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERM(formula);
+  CVC5_API_SOLVER_CHECK_TERM_WITH_SORT(formula, getBooleanSort());
+  ensureWellFormedTerm(formula);
+  //////// all checks before this line
+  using Node = internal::Node;
+  struct Encoder
+  {
+    std::unordered_map<Node, uint32_t> ids;
+    std::unordered_map<uint32_t, Node> rev;
+    std::vector<std::vector<int>> clauses;
+    uint32_t nextId = 1;
+    uint32_t makeVar(const Node& n)
+    {
+      auto it = ids.find(n);
+      if (it != ids.end()) return it->second;
+      uint32_t id = nextId++;
+      ids[n] = id;
+      rev[id] = n;
+      return id;
+    }
+    uint32_t encode(const Node& n)
+    {
+      auto it = ids.find(n);
+      if (it != ids.end()) return it->second;
+      if (n.isConst())
+      {
+        uint32_t id = makeVar(n);
+        bool val = n.getConst<bool>();
+        clauses.push_back({val ? (int)id : -(int)id});
+        return id;
+      }
+      internal::Kind k = n.getKind();
+      if (k == internal::Kind::NOT)
+      {
+        uint32_t c = encode(n[0]);
+        uint32_t id = makeVar(n);
+        clauses.push_back({-(int)id, -(int)c});
+        clauses.push_back({(int)id, (int)c});
+        return id;
+      }
+      if (k == internal::Kind::AND)
+      {
+        std::vector<uint32_t> ch;
+        for (const Node& nc : n)
+        {
+          ch.push_back(encode(nc));
+        }
+        uint32_t id = makeVar(n);
+        for (uint32_t v : ch)
+        {
+          clauses.push_back({-(int)id, (int)v});
+        }
+        std::vector<int> big;
+        big.push_back((int)id);
+        for (uint32_t v : ch) big.push_back(-(int)v);
+        clauses.push_back(big);
+        return id;
+      }
+      if (k == internal::Kind::OR)
+      {
+        std::vector<uint32_t> ch;
+        for (const Node& nc : n)
+        {
+          ch.push_back(encode(nc));
+        }
+        uint32_t id = makeVar(n);
+        for (uint32_t v : ch)
+        {
+          clauses.push_back({(int)id, -(int)v});
+        }
+        std::vector<int> big;
+        big.push_back(-(int)id);
+        for (uint32_t v : ch) big.push_back((int)v);
+        clauses.push_back(big);
+        return id;
+      }
+      if (k == internal::Kind::IMPLIES)
+      {
+        uint32_t p = encode(n[0]);
+        uint32_t q = encode(n[1]);
+        uint32_t id = makeVar(n);
+        clauses.push_back({-(int)id, -(int)p, (int)q});
+        clauses.push_back({(int)id, (int)p});
+        clauses.push_back({(int)id, -(int)q});
+        return id;
+      }
+      if (k == internal::Kind::ITE)
+      {
+        uint32_t c = encode(n[0]);
+        uint32_t t = encode(n[1]);
+        uint32_t e = encode(n[2]);
+        uint32_t id = makeVar(n);
+        clauses.push_back({-(int)c, -(int)t, (int)id});
+        clauses.push_back({-(int)c, (int)t, -(int)id});
+        clauses.push_back({(int)c, -(int)e, (int)id});
+        clauses.push_back({(int)c, (int)e, -(int)id});
+        return id;
+      }
+      if (k == internal::Kind::XOR)
+      {
+        uint32_t p = encode(n[0]);
+        uint32_t q = encode(n[1]);
+        uint32_t id = makeVar(n);
+        clauses.push_back({-(int)id, -(int)p, -(int)q});
+        clauses.push_back({-(int)id, (int)p, (int)q});
+        clauses.push_back({(int)id, -(int)p, (int)q});
+        clauses.push_back({(int)id, (int)p, -(int)q});
+        return id;
+      }
+      if (k == internal::Kind::EQUAL && n[0].getType().isBoolean())
+      {
+        uint32_t p = encode(n[0]);
+        uint32_t q = encode(n[1]);
+        uint32_t id = makeVar(n);
+        clauses.push_back({-(int)id, -(int)p, (int)q});
+        clauses.push_back({-(int)id, (int)p, -(int)q});
+        clauses.push_back({(int)id, -(int)p, -(int)q});
+        clauses.push_back({(int)id, (int)p, (int)q});
+        return id;
+      }
+      // default: treat as atom
+      return makeVar(n);
+    }
+  };
+
+  Encoder enc;
+  uint32_t rootId = enc.encode(formula.getNode());
+  enc.clauses.push_back({(int)rootId});
+  std::vector<uint32_t> cnf;
+  for (const auto& cl : enc.clauses)
+  {
+    for (int l : cl)
+    {
+      cnf.push_back(static_cast<uint32_t>(l));
+    }
+    cnf.push_back(0);
+  }
+  std::unordered_map<uint32_t, Term> mp;
+  for (const auto& p : enc.rev)
+  {
+    mp.emplace(p.first, Term(&d_tm, p.second));
+  }
+  return {cnf, mp};
   ////////
   CVC5_API_TRY_CATCH_END;
 }

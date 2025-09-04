@@ -82,7 +82,8 @@ class CVC5_EXPORT Cmd
                       parser::SymManager* sm,
                       std::ostream& out);
   /**
-   * Same as invoke, but prints the result to the output stream associated to the solver.
+   * Same as invoke, but prints the result to the output stream associated to
+   * the solver.
    */
   virtual void invokeAndPrintResult(cvc5::Solver* solver,
                                     parser::SymManager* sm);
@@ -291,6 +292,36 @@ class CVC5_EXPORT DeclarePoolCommand : public DeclarationDefinitionCommand
   void toStream(std::ostream& out) const override;
 }; /* class DeclarePoolCommand */
 
+class CVC5_EXPORT DeclareProjVarCommand : public Cmd
+{
+ public:
+  DeclareProjVarCommand(const std::vector<cvc5::Term>& vars);
+  const std::vector<cvc5::Term>& getVars() const;
+
+  void invoke(cvc5::Solver* solver, parser::SymManager* sm) override;
+  std::string getCommandName() const override;
+  void toStream(std::ostream& out) const override;
+
+ private:
+  std::vector<cvc5::Term> d_vars;
+};
+
+class CVC5_EXPORT DeclareWeightCommand : public Cmd
+{
+ public:
+  DeclareWeightCommand(cvc5::Term var, uint32_t weight);
+  cvc5::Term getVar() const;
+  uint32_t getWeight() const;
+
+  void invoke(cvc5::Solver* solver, parser::SymManager* sm) override;
+  std::string getCommandName() const override;
+  void toStream(std::ostream& out) const override;
+
+ private:
+  cvc5::Term d_var;
+  uint32_t d_weight;
+};
+
 class CVC5_EXPORT DeclareOracleFunCommand : public Cmd
 {
  public:
@@ -325,6 +356,7 @@ class CVC5_EXPORT DeclareSortCommand : public DeclarationDefinitionCommand
 {
  protected:
   size_t d_arity;
+
  public:
   DeclareSortCommand(const std::string& id, size_t arity);
 
@@ -395,11 +427,11 @@ class CVC5_EXPORT DefineFunctionRecCommand : public Cmd
                            const std::vector<cvc5::Term>& formals,
                            cvc5::Term formula);
   DefineFunctionRecCommand(const std::vector<cvc5::Term>& funcs,
-                           const std::vector<std::vector<cvc5::Term> >& formals,
+                           const std::vector<std::vector<cvc5::Term>>& formals,
                            const std::vector<cvc5::Term>& formula);
 
   const std::vector<cvc5::Term>& getFunctions() const;
-  const std::vector<std::vector<cvc5::Term> >& getFormals() const;
+  const std::vector<std::vector<cvc5::Term>>& getFormals() const;
   const std::vector<cvc5::Term>& getFormulas() const;
 
   void invoke(cvc5::Solver* solver, parser::SymManager* sm) override;
@@ -410,7 +442,7 @@ class CVC5_EXPORT DefineFunctionRecCommand : public Cmd
   /** functions we are defining */
   std::vector<cvc5::Term> d_funcs;
   /** formal arguments for each of the functions we are defining */
-  std::vector<std::vector<cvc5::Term> > d_formals;
+  std::vector<std::vector<cvc5::Term>> d_formals;
   /** formulas corresponding to the bodies of the functions we are defining */
   std::vector<cvc5::Term> d_formulas;
 }; /* class DefineFunctionRecCommand */
@@ -485,8 +517,7 @@ class CVC5_EXPORT CheckSatAssumingCommand : public Cmd
 class CVC5_EXPORT DeclareSygusVarCommand : public DeclarationDefinitionCommand
 {
  public:
-  DeclareSygusVarCommand(const std::string& id,
-                         cvc5::Sort sort);
+  DeclareSygusVarCommand(const std::string& id, cvc5::Sort sort);
   /** returns the declared variable */
   cvc5::Term getVar() const;
   /** returns the declared variable's sort */
@@ -614,7 +645,7 @@ class CVC5_EXPORT SygusInvConstraintCommand : public Cmd
 class CVC5_EXPORT CheckSynthCommand : public Cmd
 {
  public:
-  CheckSynthCommand(bool isNext = false) : d_isNext(isNext){};
+  CheckSynthCommand(bool isNext = false) : d_isNext(isNext) {};
   /** returns the result of the check-synth call */
   cvc5::SynthResult getResult() const;
   /** prints the result of the check-synth-call */
@@ -642,13 +673,12 @@ class CVC5_EXPORT CheckSynthCommand : public Cmd
   std::stringstream d_solution;
 };
 
-
 /** Find synth command */
 class CVC5_EXPORT FindSynthCommand : public Cmd
 {
  public:
   FindSynthCommand(modes::FindSynthTarget fst, cvc5::Grammar* g)
-      : d_fst(fst), d_grammar(g){};
+      : d_fst(fst), d_grammar(g) {};
   /** returns the result of the find-synth call */
   Term getResult() const;
   /** prints the result of the find-synth call */
@@ -674,7 +704,7 @@ class CVC5_EXPORT FindSynthCommand : public Cmd
 class CVC5_EXPORT FindSynthNextCommand : public Cmd
 {
  public:
-  FindSynthNextCommand(){};
+  FindSynthNextCommand() {};
   /** returns the result of the find-synth call */
   Term getResult() const;
   /** prints the result of the find-synth call */

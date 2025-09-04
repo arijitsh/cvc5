@@ -475,6 +475,10 @@ class CVC5_EXPORT SolverEngine
    * of type T.
    */
   void declarePool(const Node& p, const std::vector<Node>& initValue);
+  /** Declare projection variable. */
+  void declareProjVar(const Node& v);
+  /** Declare weight for variable. */
+  void declareWeight(const Node& v, uint32_t weight);
 
   /**
    * Add an oracle function to the state, also adds an oracle interface

@@ -131,13 +131,12 @@ void Cmd::invoke(cvc5::Solver* solver,
   out << std::flush;
 }
 
-void Cmd::invokeAndPrintResult(cvc5::Solver* solver,
-                               parser::SymManager* sm)
+void Cmd::invokeAndPrintResult(cvc5::Solver* solver, parser::SymManager* sm)
 {
   invoke(solver, sm);
   // the output stream reference is retrieved here since it might change after
   // invoking a (set-option :out ...) command
-  std::ostream &out = solver->getDriverOptions().out();
+  std::ostream& out = solver->getDriverOptions().out();
   if (!ok())
   {
     out << *d_commandStatus;
@@ -1018,6 +1017,71 @@ void DeclarePoolCommand::toStream(std::ostream& out) const
 {
   internal::Printer::getPrinter(out)->toStreamCmdDeclarePool(
       out, d_symbol, sortToTypeNode(d_sort), termVectorToNodes(d_initValue));
+}
+
+/* -------------------------------------------------------------------------- */
+/* class DeclareProjVarCommand                                               */
+/* -------------------------------------------------------------------------- */
+
+DeclareProjVarCommand::DeclareProjVarCommand(
+    const std::vector<cvc5::Term>& vars)
+    : d_vars(vars)
+{
+}
+
+const std::vector<cvc5::Term>& DeclareProjVarCommand::getVars() const
+{
+  return d_vars;
+}
+
+void DeclareProjVarCommand::invoke(cvc5::Solver* solver, SymManager* sm)
+{
+  solver->declareProjVar(d_vars);
+  d_commandStatus = CommandSuccess::instance();
+}
+
+std::string DeclareProjVarCommand::getCommandName() const
+{
+  return "declare-projvar";
+}
+
+void DeclareProjVarCommand::toStream(std::ostream& out) const
+{
+  out << "(declare-projvar";
+  for (const Term& v : d_vars)
+  {
+    out << ' ' << v.toString();
+  }
+  out << ')';
+}
+
+/* -------------------------------------------------------------------------- */
+/* class DeclareWeightCommand                                               */
+/* -------------------------------------------------------------------------- */
+
+DeclareWeightCommand::DeclareWeightCommand(cvc5::Term var, uint32_t weight)
+    : d_var(var), d_weight(weight)
+{
+}
+
+cvc5::Term DeclareWeightCommand::getVar() const { return d_var; }
+
+uint32_t DeclareWeightCommand::getWeight() const { return d_weight; }
+
+void DeclareWeightCommand::invoke(cvc5::Solver* solver, SymManager* sm)
+{
+  solver->declareWeight(d_var, d_weight);
+  d_commandStatus = CommandSuccess::instance();
+}
+
+std::string DeclareWeightCommand::getCommandName() const
+{
+  return "declare-weight";
+}
+
+void DeclareWeightCommand::toStream(std::ostream& out) const
+{
+  out << "(declare-weight " << d_var.toString() << ' ' << d_weight << ')';
 }
 
 /* -------------------------------------------------------------------------- */

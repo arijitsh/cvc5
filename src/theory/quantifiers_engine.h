@@ -50,7 +50,7 @@ class TermDb;
 class TermDbSygus;
 class TermEnumeration;
 class TermRegistry;
-}
+}  // namespace quantifiers
 
 /**
  * The main class that manages techniques for quantified formulas.
@@ -82,7 +82,7 @@ class QuantifiersEngine : protected EnvObj
   /** notify preprocessed assertion */
   void ppNotifyAssertions(const std::vector<Node>& assertions);
   /** check at level */
-  void check( Theory::Effort e );
+  void check(Theory::Effort e);
   /** notify that theories were combined */
   void notifyCombineTheories();
   /** preRegister quantifier
@@ -92,7 +92,7 @@ class QuantifiersEngine : protected EnvObj
    */
   void preRegisterQuantifier(Node q);
   /** assert universal quantifier */
-  void assertQuantifier( Node q, bool pol );
+  void assertQuantifier(Node q, bool pol);
   /** notification when master equality engine is updated */
   void eqNotifyNewClass(TNode t);
   /** mark relevant quantified formula, this will indicate it should be checked
@@ -145,6 +145,10 @@ class QuantifiersEngine : protected EnvObj
   bool getSynthSolutions(std::map<Node, std::map<Node, Node> >& sol_map);
   /** Declare pool */
   void declarePool(Node p, const std::vector<Node>& initValue);
+  /** Declare projection variable */
+  void declareProjVar(Node v);
+  /** Declare weight for variable */
+  void declareWeight(Node v, uint32_t weight);
   /** Declare oracle fun */
   void declareOracleFun(Node f);
   /** Get the list of all declared oracle functions */
