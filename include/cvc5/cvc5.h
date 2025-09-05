@@ -6689,6 +6689,20 @@ class CVC5_EXPORT Solver
   std::string getInstantiations() const;
 
   /**
+   * @warning This function is experimental and may change in future versions.
+   *
+   * Return the Boolean CNF abstraction of the given formula. The CNF is
+   * returned as a flat vector using the DIMACS format where clauses are
+   * separated by the value 0. The accompanying map stores the association of
+   * CNF variables (starting at 1) with the original SMT atoms they represent.
+   *
+   * @param formula The Boolean formula to abstract.
+   * @return Pair containing the CNF vector and variable map.
+   */
+  std::pair<std::vector<uint32_t>, std::unordered_map<uint32_t, Term>>
+  getBooleanAbstraction(const Term& formula) const;
+
+  /**
    * Push (a) level(s) to the assertion stack.
    *
    * SMT-LIB:
