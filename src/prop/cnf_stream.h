@@ -244,6 +244,8 @@ class CnfStream : protected EnvObj
   void handleIte(TNode node);
   void handleAnd(TNode node);
   void handleOr(TNode node);
+  /** Collect the literals and parity of the given XOR node. */
+  void collectXorClause(TNode node, SatClause& clause, bool& parity);
 
   /** Stores the literal of the given node in d_literalToNodeMap.
    *

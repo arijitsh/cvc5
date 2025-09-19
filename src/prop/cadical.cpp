@@ -42,6 +42,12 @@ using CadicalVar = int;
 // helper functions
 namespace {
 
+#ifdef CVC5_CADICAL_HAS_XOR
+constexpr bool s_hasAddXor = true;
+#else
+constexpr bool s_hasAddXor = false;
+#endif
+
 SatValue toSatValue(int result)
 {
   if (result == 10) return SAT_VALUE_TRUE;
@@ -1479,9 +1485,72 @@ ClauseId CadicalSolver::addXorClause(SatClause& clause,
                                      bool rhs,
                                      bool removable)
 {
+#ifndef CVC5_CADICAL_HAS_XOR
   Unreachable() << "CaDiCaL does not support adding XOR clauses.";
-  return 0;
+  return ClauseIdError;
+#else
+  auto addXorToSolver = [&](const SatClause& cl, bool parity) {
+    for (const SatLiteral& lit : cl)
+    {
+      d_solver->add_xor(toCadicalLit(lit));
+    }
+    if (parity)
+    {
+      d_solver->add_xor(toCadicalVar(d_true));
+    }
+    d_solver->add_xor(0);
+  };
+
+  auto addEmptyClause = [&]() {
+    d_solver->add(0);
+  };
+
+  SatLiteral activation =
+      d_propagator ? d_propagator->current_activation_lit() : undefSatLiteral;
+
+  if (clause.empty())
+  {
+    if (!rhs)
+    {
+      return ClauseIdError;
+    }
+    if (activation == undefSatLiteral)
+    {
+      addEmptyClause();
+      ++d_statistics.d_numClauses;
+      return ClauseIdError;
+    }
+    SatVariable guardVar = newVar(false);
+    SatLiteral guardLit(guardVar);
+    SatClause guardClause(1);
+    guardClause[0] = ~guardLit;
+    d_propagator->add_clause(guardClause);
+    SatClause fullClause;
+    fullClause.push_back(activation);
+    fullClause.push_back(guardLit);
+    addXorToSolver(fullClause, rhs);
+    ++d_statistics.d_numClauses;
+    return ClauseIdError;
+  }
+
+  SatClause fullClause = clause;
+  if (activation != undefSatLiteral)
+  {
+    SatVariable guardVar = newVar(false);
+    SatLiteral guardLit(guardVar);
+    SatClause guardClause(1);
+    guardClause[0] = ~guardLit;
+    d_propagator->add_clause(guardClause);
+    fullClause.push_back(activation);
+    fullClause.push_back(guardLit);
+  }
+  addXorToSolver(fullClause, rhs);
+  ++d_statistics.d_numClauses;
+  return ClauseIdError;
+#endif
 }
+
+bool CadicalSolver::nativeXor() { return s_hasAddXor; }
 
 SatVariable CadicalSolver::newVar(bool isTheoryAtom, bool canErase)
 {

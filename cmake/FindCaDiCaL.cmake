@@ -17,9 +17,12 @@
 ##
 
 include(deps-helper)
+include(CheckCXXSourceCompiles)
 
 find_path(CaDiCaL_INCLUDE_DIR NAMES cadical/cadical.hpp cadical/tracer.hpp)
 find_library(CaDiCaL_LIBRARIES NAMES cadical)
+
+set(CVC5_CADICAL_HAS_XOR OFF)
 
 set(CaDiCaL_FOUND_SYSTEM FALSE)
 if(CaDiCaL_INCLUDE_DIR AND CaDiCaL_LIBRARIES)
@@ -156,6 +159,26 @@ if(NOT CaDiCaL_FOUND_SYSTEM)
 
   set(CaDiCaL_INCLUDE_DIR "${DEPS_BASE}/include/")
   set(CaDiCaL_LIBRARIES "${DEPS_BASE}/lib/libcadical.a")
+endif()
+
+if(CaDiCaL_INCLUDE_DIR)
+  set(CMAKE_REQUIRED_INCLUDES ${CaDiCaL_INCLUDE_DIR})
+  check_cxx_source_compiles(
+    "
+    #include <cadical/cadical.hpp>
+    int main()
+    {
+      CaDiCaL::Solver solver;
+      solver.add_xor(0);
+      return 0;
+    }
+    "
+    CVC5_CADICAL_HAS_XOR_CHECK
+  )
+  unset(CMAKE_REQUIRED_INCLUDES)
+  if(CVC5_CADICAL_HAS_XOR_CHECK)
+    set(CVC5_CADICAL_HAS_XOR ON)
+  endif()
 endif()
 
 set(CaDiCaL_FOUND TRUE)

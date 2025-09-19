@@ -303,13 +303,46 @@ SatLiteral CnfStream::getLiteral(TNode node) {
   return literal;
 }
 
+void CnfStream::collectXorClause(TNode node, SatClause& clause, bool& parity)
+{
+  if (node.getKind() == Kind::XOR)
+  {
+    for (const Node& child : node)
+    {
+      collectXorClause(child, clause, parity);
+    }
+    return;
+  }
+  if (node.getKind() == Kind::CONST_BOOLEAN)
+  {
+    if (node.getConst<bool>())
+    {
+      parity = !parity;
+    }
+    return;
+  }
+  clause.push_back(toCNF(node, false));
+}
+
 void CnfStream::handleXor(TNode xorNode)
 {
   Assert(!hasLiteral(xorNode)) << "Atom already mapped!";
   Assert(xorNode.getKind() == Kind::XOR) << "Expecting an XOR expression!";
-  Assert(xorNode.getNumChildren() == 2) << "Expecting exactly 2 children!";
   Assert(!d_removable) << "Removable clauses can not contain Boolean structure";
   Trace("cnf") << "CnfStream::handleXor(" << xorNode << ")\n";
+
+  if (d_satSolver->nativeXor())
+  {
+    SatClause clause;
+    bool parity = false;
+    collectXorClause(xorNode, clause, parity);
+    SatLiteral xorLit = newLiteral(xorNode);
+    clause.push_back(xorLit);
+    d_satSolver->addXorClause(clause, parity, false);
+    return;
+  }
+
+  Assert(xorNode.getNumChildren() == 2) << "Expecting exactly 2 children!";
 
   SatLiteral a = getLiteral(xorNode[0]);
   SatLiteral b = getLiteral(xorNode[1]);
@@ -609,6 +642,29 @@ void CnfStream::convertAndAssertXor(TNode node, bool negated)
   Assert(node.getKind() == Kind::XOR);
   Trace("cnf") << "CnfStream::convertAndAssertXor(" << node
                << ", negated = " << (negated ? "true" : "false") << ")\n";
+  if (d_satSolver->nativeXor())
+  {
+    SatClause clause;
+    bool parity = false;
+    collectXorClause(node, clause, parity);
+    bool rhs = (!negated) ^ parity;
+    if (clause.empty())
+    {
+      if (rhs)
+      {
+        SatClause empty;
+        Node clauseNode = node;
+        if (negated)
+        {
+          clauseNode = node.negate();
+        }
+        assertClause(clauseNode, empty);
+      }
+      return;
+    }
+    d_satSolver->addXorClause(clause, rhs, d_removable);
+    return;
+  }
   if (!negated) {
     // p XOR q
     SatLiteral p = toCNF(node[0], false);
