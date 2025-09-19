@@ -22,7 +22,7 @@ include(CheckCXXSourceCompiles)
 find_path(CaDiCaL_INCLUDE_DIR NAMES cadical/cadical.hpp cadical/tracer.hpp)
 find_library(CaDiCaL_LIBRARIES NAMES cadical)
 
-set(CVC5_CADICAL_HAS_XOR OFF)
+set(CVC5_CADICAL_HAS_XOR ON)
 
 set(CaDiCaL_FOUND_SYSTEM FALSE)
 if(CaDiCaL_INCLUDE_DIR AND CaDiCaL_LIBRARIES)
@@ -91,7 +91,7 @@ if(NOT CaDiCaL_FOUND_SYSTEM)
   include(ExternalProject)
 
   set(CaDiCaL_VERSION "rel-2.1.3")
-  set(CaDiCaL_CHECKSUM "abfe890aa4ccda7b8449c7ad41acb113cfb8e7e8fbf5e49369075f9b00d70465")
+  set(CaDiCaL_CHECKSUM "e02c1b14643626918923c38b0e74c8ca2990ef07")
 
   # avoid configure script and instantiate the makefile manually the configure
   # scripts unnecessarily fails for cross compilation thus we do the bare
@@ -136,7 +136,8 @@ if(NOT CaDiCaL_FOUND_SYSTEM)
     CaDiCaL-EP
     ${COMMON_EP_CONFIG}
     BUILD_IN_SOURCE ON
-    URL https://github.com/arminbiere/cadical/archive/${CaDiCaL_VERSION}.tar.gz
+    GIT_REPOSITORY https://github.com/arijitsh/cadical.git
+    GIT_TAG main
     URL_HASH SHA256=${CaDiCaL_CHECKSUM}
     CONFIGURE_COMMAND mkdir -p <SOURCE_DIR>/build
     # avoid configure script, prepare the makefile manually
