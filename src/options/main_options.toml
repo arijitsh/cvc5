@@ -170,6 +170,14 @@ name   = "Driver"
   help       = "dump the difficulty measure after every response to check-sat"
 
 [[option]]
+  name       = "boolAbsFile"
+  category   = "regular"
+  long       = "boolabs-file=FILE"
+  type       = "std::string"
+  default    = '""'
+  help       = "dump Boolean abstraction of assertions to FILE"
+
+[[option]]
   name       = "forceNoLimitCpuWhileDump"
   category   = "expert"
   long       = "force-no-limit-cpu-while-dump"
