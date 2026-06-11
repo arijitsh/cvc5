@@ -68,8 +68,8 @@ typerule = "::cvc5::internal::theory::boolean::BooleanTypeRule"
 [[kinds]]
 type     = "operator"
 name     = "XOR"
-children = 2
-comment  = "exclusive or (exactly two parameters)"
+children = "2:"
+comment  = "exclusive or at least two parameters"
 typerule = "::cvc5::internal::theory::boolean::BooleanTypeRule"
 
 [[kinds]]

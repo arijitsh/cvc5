@@ -561,6 +561,11 @@ def test_xor_term(tm):
     p_f_x.xorTerm(p_0)
     p_f_x.xorTerm(p_f_x)
 
+    b.xorTerm([b])
+    b.xorTerm([b, p_0])
+    with pytest.raises(RuntimeError):
+        b.xorTerm([x])
+
 
 def test_eq_term(tm):
     bvSort = tm.mkBitVectorSort(8)

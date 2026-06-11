@@ -57,6 +57,27 @@ public:
   virtual ClauseId addXorClause(SatClause& clause, bool rhs, bool removable) = 0;
 
   /**
+   * Add a linear constraint over Z_p (prime hash):
+   *   sum_i weights[i] * clause[i] == rhs (mod modulus)
+   * Only CaDiCaL with the cvc5 propagator implements this; other solvers may
+   * leave it unimplemented (the feature is only enabled in that configuration).
+   */
+  virtual void addModpClause(SatClause& clause,
+                             const std::vector<uint64_t>& weights,
+                             uint64_t rhs,
+                             uint64_t modulus)
+  {
+    (void)clause;
+    (void)weights;
+    (void)rhs;
+    (void)modulus;
+    Unimplemented() << "SAT solver does not support mod-p clauses.";
+  }
+
+  /** Enable or disable verbose logging for XOR clauses. */
+  virtual void setXorClauseVerbose(bool enabled) { (void)enabled; }
+
+  /**
    * Create a new boolean variable in the solver.
    * @param isTheoryAtom is this a theory atom that needs to be asserted to
    * theory

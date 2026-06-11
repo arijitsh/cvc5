@@ -151,6 +151,8 @@ class SmtDriverSingleCall : public SmtDriver
    * starting from this index onward.
    */
   context::CDO<size_t> d_assertionListIndex;
+  /** The number of XOR clause assertions that have already been processed. */
+  context::CDO<size_t> d_xorAssertionListIndex;
 };
 
 }  // namespace smt

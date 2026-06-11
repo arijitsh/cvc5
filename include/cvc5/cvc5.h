@@ -24,12 +24,14 @@
 #include <cvc5/cvc5_types.h>
 
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -511,7 +513,8 @@ class CVC5_EXPORT Sort
    * The symbol of this sort is the string that was
    * provided when constructing it via
    * TermManager::mkUninterpretedSort(const std::optional<std::string>&), or
-   * TermManager::mkUninterpretedSortConstructorSort(size_t, const std::optional<std::string>&).
+   * TermManager::mkUninterpretedSortConstructorSort(size_t, const
+   * std::optional<std::string>&).
    *
    * @return The raw symbol of the sort.
    */
@@ -1384,6 +1387,20 @@ class CVC5_EXPORT Term
    * @return The exclusive disjunction of this term and the given term.
    */
   Term xorTerm(const Term& t) const;
+
+  /**
+   * Boolean exclusive or over multiple terms.
+   * @param terms A sequence of Boolean terms.
+   * @return The exclusive disjunction of this term and the given terms.
+   */
+  Term xorTerm(const std::vector<Term>& terms) const;
+
+  /**
+   * Boolean exclusive or over multiple terms.
+   * @param terms A sequence of Boolean terms.
+   * @return The exclusive disjunction of this term and the given terms.
+   */
+  Term xorTerm(std::initializer_list<Term> terms) const;
 
   /**
    * Equality.
@@ -4213,10 +4230,12 @@ class CVC5_EXPORT TermManager
    * @param s The string this constant represents.
    * @return The String constant.
    * @warning This function is deprecated and replaced by
-   *          \ref TermManager::mkString(const std::u32string& s) "TermManager::mkString(const std::u32string& s)".
-   *          It will be removed in a future release.
+   *          \ref TermManager::mkString(const std::u32string& s)
+   * "TermManager::mkString(const std::u32string& s)". It will be removed in a
+   * future release.
    */
-  [[deprecated("Use TermManager::mkString(const std::u32string& s) instead")]] Term
+  [[deprecated(
+      "Use TermManager::mkString(const std::u32string& s) instead")]] Term
   mkString(const std::wstring& s);
   /**
    * Create a String constant from a `std::u32string`.
@@ -5348,10 +5367,12 @@ class CVC5_EXPORT Solver
    * @param s The string this constant represents.
    * @return The String constant.
    * @warning This function is deprecated and replaced by
-   *          `TermManager::mkString(const std::u32string& s)`. It will be removed in a future release.
+   *          `TermManager::mkString(const std::u32string& s)`. It will be
+   * removed in a future release.
    */
-  [[deprecated("Use TermManager::mkString(const std::u32string& s) instead")]] Term mkString(
-      const std::wstring& s) const;
+  [[deprecated(
+      "Use TermManager::mkString(const std::u32string& s) instead")]] Term
+  mkString(const std::wstring& s) const;
 
   /**
    * Create an empty sequence of the given element sort.
@@ -5684,8 +5705,50 @@ class CVC5_EXPORT Solver
    * \endverbatim
    *
    * @param term The formula to assert.
-   */
+  */
   void assertFormula(const Term& term) const;
+
+  /**
+   * Assert that the XOR of the given Boolean terms is equal to @p rhs.
+   *
+   * The XOR is asserted using a native XOR clause in the underlying SAT solver
+   * when available (e.g., CaDiCaL). This enables a single XOR constraint such
+   * as `(xor a b (not c)) = true` to be forwarded directly to CaDiCaL.
+   *
+   * @param terms The Boolean terms that form the XOR clause. Each term must be
+   *              well-formed and of Boolean sort.
+   * @param rhs   The right-hand side of the XOR equation.
+   */
+  void assertXorClause(const std::vector<Term>& terms, bool rhs) const;
+
+  /**
+   * Assert a linear constraint over Z_p (a prime field):
+   *   sum_i weights[i] * terms[i]  ==  rhs   (mod modulus)
+   * where each @p terms[i] is a Boolean term (interpreted as 0/1).
+   *
+   * This is the "prime hash" of approximate model counting. When the
+   * underlying SAT solver is CaDiCaL with the cvc5 propagator, the constraint
+   * is handed to an incremental Z_p Gauss-Jordan engine inside the propagator
+   * instead of being bit-blasted (cf. assertXorClause for GF(2) parities).
+   *
+   * @param terms   The Boolean terms (each contributes 0 or 1).
+   * @param weights The coefficient of each term, aligned by index.
+   * @param rhs     The right-hand side value (mod @p modulus).
+   * @param modulus The (prime) modulus; must be > 1.
+   */
+  void assertModpClause(const std::vector<Term>& terms,
+                        const std::vector<uint64_t>& weights,
+                        uint64_t rhs,
+                        uint64_t modulus) const;
+
+  /**
+   * Enable or disable verbose logging for native XOR clause assertions.
+   *
+   * When enabled, each XOR clause asserted through the API (either via
+   * `assertXorClause` or Boolean formulas that translate to native XOR clauses)
+   * is printed together with the literals that are sent to the SAT solver.
+   */
+  void setXorAssertionVerbose(bool enabled) const;
 
   /**
    * Check satisfiability.
@@ -6398,6 +6461,23 @@ class CVC5_EXPORT Solver
                    const Sort& sort,
                    const std::vector<Term>& initValue) const;
   /**
+   * Declare projection variables to be used by quantifier elimination.
+   *
+   * @warning This function is experimental and may change in future versions.
+   *
+   * @param vars The variables that should be projected.
+   */
+  void declareProjVar(const std::vector<Term>& vars) const;
+  /**
+   * Declare a weight for the given variable.
+   *
+   * @warning This function is experimental and may change in future versions.
+   *
+   * @param var The variable for which the weight is set.
+   * @param weight The weight associated with the variable.
+   */
+  void declareWeight(const Term& var, uint32_t weight) const;
+  /**
    * Declare an oracle function with reference to an implementation.
    *
    * Oracle functions have a different semantics with respect to ordinary
@@ -6667,6 +6747,52 @@ class CVC5_EXPORT Solver
   std::string getInstantiations() const;
 
   /**
+   * @warning This function is experimental and may change in future versions.
+   *
+   * Return the Boolean CNF abstraction of the given formula. The CNF is
+   * returned as a flat vector using the DIMACS format where clauses are
+   * separated by the value 0. The accompanying map stores the association of
+   * CNF variables (starting at 1) with the original SMT atoms they represent.
+   *
+   * @param formula The Boolean formula to abstract.
+   * @return Pair containing the CNF vector and variable map.
+   */
+  std::pair<std::vector<uint32_t>, std::unordered_map<uint32_t, Term>>
+  getBooleanAbstraction(const Term& formula) const;
+
+  /**
+   * @warning This function is experimental and may change in future versions.
+   *
+   * Return a model-preserving, eagerly bit-blasted CNF of the given formula.
+   *
+   * Every bit-vector atom occurring in @p formula is bit-blasted to a Boolean
+   * circuit over the individual bits of the bit-vector variables, and the
+   * resulting Boolean formula is Tseitin-transformed to CNF. Because no
+   * preprocessing/simplification is applied that would eliminate bits, the set
+   * of satisfying assignments projected onto the bits of the bit-vector
+   * variables in @p projectionVars is in exact one-to-one correspondence with
+   * the bit-vector models of @p formula. This makes the CNF suitable for
+   * (projected) model counting of the bit-vector formula.
+   *
+   * The CNF is returned as a flat vector in DIMACS form where clauses are
+   * separated by the value 0 and literals use 1-based variable identifiers
+   * (negative for negated literals). The second element of the tuple is the
+   * number of CNF variables. The third element is the sampling/independent
+   * support: the CNF variable identifiers (1-based) corresponding to the bits
+   * of @p projectionVars, in order. Bits that do not occur in any clause (e.g.
+   * unconstrained variables) are assigned fresh variable identifiers so that a
+   * projected counter accounts for them as free bits.
+   *
+   * @param formula The Boolean (bit-vector) formula to bit-blast.
+   * @param projectionVars The bit-vector variables whose bits form the sampling
+   *                       set.
+   * @return Tuple of (CNF vector, number of variables, sampling variables).
+   */
+  std::tuple<std::vector<uint32_t>, uint32_t, std::vector<uint32_t>>
+  getBitblastedCnf(const Term& formula,
+                   const std::vector<Term>& projectionVars) const;
+
+  /**
    * Push (a) level(s) to the assertion stack.
    *
    * SMT-LIB:
@@ -6740,8 +6866,24 @@ class CVC5_EXPORT Solver
    * @note Asserts isLogicSet().
    *
    * @return The logic used by the solver.
-   */
+  */
   std::string getLogic() const;
+
+  /**
+   * Determine whether this build was compiled with CaDiCaL native XOR support.
+   *
+   * @return True if the CaDiCaL backend supports native XOR clauses.
+   */
+  bool hasCadicalXorSupport() const;
+
+  /**
+   * Enable or disable forwarding native XOR clauses to the underlying SAT solver.
+   * This is equivalent to setting the :sat-use-native-xor option.
+   *
+   * @param useNative True to use native XOR clauses when available, false to
+   *                  encode XOR via CNF clauses.
+   */
+  void setSatUseNativeXor(bool useNative) const;
 
   /**
    * Set option.

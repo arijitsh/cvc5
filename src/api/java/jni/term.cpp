@@ -408,6 +408,30 @@ JNIEXPORT jlong JNICALL Java_io_github_cvc5_Term_xorTerm(JNIEnv* env,
   CVC5_JAVA_API_TRY_CATCH_END_RETURN(env, 0);
 }
 
+JNIEXPORT jlong JNICALL Java_io_github_cvc5_Term_xorTerm__J_3J(
+    JNIEnv* env,
+    jobject,
+    jlong pointer,
+    jlongArray termPointers)
+{
+  CVC5_JAVA_API_TRY_CATCH_BEGIN;
+  Term* current = reinterpret_cast<Term*>(pointer);
+  jsize termCount = env->GetArrayLength(termPointers);
+  jlong* elements = env->GetLongArrayElements(termPointers, nullptr);
+
+  std::vector<Term> terms(termCount);
+  for (jsize i = 0; i < termCount; i++)
+  {
+    Term* term = reinterpret_cast<Term*>(elements[i]);
+    terms[i] = *term;
+  }
+  env->ReleaseLongArrayElements(termPointers, elements, 0);
+
+  Term* ret = new Term(current->xorTerm(terms));
+  return reinterpret_cast<jlong>(ret);
+  CVC5_JAVA_API_TRY_CATCH_END_RETURN(env, 0);
+}
+
 /*
  * Class:     io_github_cvc5_Term
  * Method:    eqTerm

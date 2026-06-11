@@ -365,55 +365,150 @@ JustifyNode JustificationStrategy::getNextJustifyNode(
       value = lastChildVal;
     }
   }
-  else if (ck == Kind::XOR || ck == Kind::EQUAL)
+  else if (ck == Kind::XOR)
   {
     Assert(curr[0].getType().isBoolean());
-    if (i == 0)
+    size_t nchild = curr.getNumChildren();
+    if (i < nchild)
     {
-      // check if the rhs forces a value
-      SatValue val1 = d_jcache.lookupValue(curr[1]);
-      if (val1 == SAT_VALUE_UNKNOWN)
+      // determine if the current child is forced based on the values of the
+      // remaining children.
+      bool othersKnown = true;
+      bool parity = false;
+      for (size_t j = 0; j < nchild; j++)
       {
-        // not forced, arbitrarily choose true
-        desiredVal = SAT_VALUE_TRUE;
+        if (j == i)
+        {
+          continue;
+        }
+        SatValue v = d_jcache.lookupValue(curr[j]);
+        if (v == SAT_VALUE_UNKNOWN)
+        {
+          othersKnown = false;
+          continue;
+        }
+        if (v == SAT_VALUE_TRUE)
+        {
+          parity = !parity;
+        }
+      }
+      if (othersKnown)
+      {
+        bool desiredParity = (currDesiredVal == SAT_VALUE_TRUE);
+        bool childParity = desiredParity != parity;
+        desiredVal = childParity ? SAT_VALUE_TRUE : SAT_VALUE_FALSE;
       }
       else
       {
-        // if the RHS of the XOR/EQUAL already had a value val1, then:
-        // ck    / currDesiredVal
-        // equal / true             ... LHS should have same value as RHS
-        // equal / false            ... LHS should have opposite value as RHS
-        // xor   / true             ... LHS should have opposite value as RHS
-        // xor   / false            ... LHS should have same value as RHS
-        desiredVal = ((ck == Kind::EQUAL) == (currDesiredVal == SAT_VALUE_TRUE))
-                         ? val1
-                         : invertValue(val1);
+        // otherwise choose true arbitrarily, mirroring the binary case.
+        desiredVal = SAT_VALUE_TRUE;
       }
-    }
-    else if (i == 1)
-    {
-      Assert(lastChildVal != SAT_VALUE_UNKNOWN);
-      // same as above, choosing a value for RHS based on the value of LHS,
-      // which is stored in lastChildVal.
-      desiredVal = ((ck == Kind::EQUAL) == (currDesiredVal == SAT_VALUE_TRUE))
-                       ? lastChildVal
-                       : invertValue(lastChildVal);
     }
     else
     {
-      // recompute the value of the first child
-      SatValue val0 = d_jcache.lookupValue(curr[0]);
-      Assert(val0 != SAT_VALUE_UNKNOWN);
-      Assert(lastChildVal != SAT_VALUE_UNKNOWN);
-      // compute the value of the equal/xor. The values for LHS/RHS are
-      // stored in val0 and lastChildVal.
-      // (val0 == lastChildVal) / ck
-      // true                  / equal ... value of curr is true
-      // true                  / xor   ... value of curr is false
-      // false                 / equal ... value of curr is false
-      // false                 / xor   ... value of curr is true
-      value = ((val0 == lastChildVal) == (ck == Kind::EQUAL)) ? SAT_VALUE_TRUE
-                                                              : SAT_VALUE_FALSE;
+      // all children have been processed, compute the parity
+      bool parity = false;
+      for (const Node& c : curr)
+      {
+        SatValue v = d_jcache.lookupValue(c);
+        Assert(v != SAT_VALUE_UNKNOWN);
+        if (v == SAT_VALUE_TRUE)
+        {
+          parity = !parity;
+        }
+      }
+      value = parity ? SAT_VALUE_TRUE : SAT_VALUE_FALSE;
+    }
+  }
+  else if (ck == Kind::EQUAL)
+  {
+    Assert(curr[0].getType().isBoolean());
+    size_t nchild = curr.getNumChildren();
+    if (i < nchild)
+    {
+      SatValue firstKnown = SAT_VALUE_UNKNOWN;
+      for (size_t j = 0; j < nchild; j++)
+      {
+        if (j == i)
+        {
+          continue;
+        }
+        SatValue v = d_jcache.lookupValue(curr[j]);
+        if (v == SAT_VALUE_UNKNOWN)
+        {
+          continue;
+        }
+        if (firstKnown == SAT_VALUE_UNKNOWN)
+        {
+          firstKnown = v;
+        }
+        else if (firstKnown != v)
+        {
+          // other children already disagree, the equality must be false
+          value = SAT_VALUE_FALSE;
+          break;
+        }
+      }
+      if (value == SAT_VALUE_UNKNOWN)
+      {
+        if (currDesiredVal == SAT_VALUE_TRUE)
+        {
+          // To satisfy equality, match any known value if present, otherwise
+          // default to true.
+          desiredVal =
+              firstKnown == SAT_VALUE_UNKNOWN ? SAT_VALUE_TRUE : firstKnown;
+        }
+        else
+        {
+          // For a disequality, flip any known value to ensure a mismatch.
+          if (firstKnown != SAT_VALUE_UNKNOWN)
+          {
+            desiredVal = invertValue(firstKnown);
+          }
+          else
+          {
+            // Arbitrary choice when nothing is known yet, mirroring the binary
+            // behaviour.
+            desiredVal = SAT_VALUE_TRUE;
+          }
+        }
+      }
+    }
+    else
+    {
+      bool seenTrue = false;
+      bool seenFalse = false;
+      bool anyUnknown = false;
+      for (const Node& c : curr)
+      {
+        SatValue v = d_jcache.lookupValue(c);
+        if (v == SAT_VALUE_UNKNOWN)
+        {
+          anyUnknown = true;
+          continue;
+        }
+        if (v == SAT_VALUE_TRUE)
+        {
+          seenTrue = true;
+        }
+        else
+        {
+          seenFalse = true;
+        }
+        if (seenTrue && seenFalse)
+        {
+          value = SAT_VALUE_FALSE;
+          break;
+        }
+      }
+      if (value == SAT_VALUE_UNKNOWN)
+      {
+        if (!anyUnknown)
+        {
+          // all assigned and consistent
+          value = SAT_VALUE_TRUE;
+        }
+      }
     }
   }
   else

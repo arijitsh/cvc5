@@ -433,6 +433,8 @@ cdef extern from "<cvc5/cvc5.h>" namespace "cvc5":
         Term mkVar(Sort sort) except +
         Term simplify(const Term& t, bint applySubs) except +
         void assertFormula(Term term) except +
+        void assertXorClause(const vector[Term]& terms, bint rhs) except +
+        void setXorAssertionVerbose(bint enabled) except +
         Result checkSat() except +
         Result checkSatAssuming(const vector[Term]& assumptions) except +
         Sort declareDatatype(const string& symbol, const vector[DatatypeConstructorDecl]& ctors)
@@ -629,6 +631,7 @@ cdef extern from "<cvc5/cvc5.h>" namespace "cvc5":
         Term andTerm(const Term& t) except +
         Term orTerm(const Term& t) except +
         Term xorTerm(const Term& t) except +
+        Term xorTerm(const vector[Term]& terms) except +
         Term eqTerm(const Term& t) except +
         Term impTerm(const Term& t) except +
         Term iteTerm(const Term& then_t, const Term& else_t) except +

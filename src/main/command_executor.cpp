@@ -23,9 +23,12 @@
 
 #include <iomanip>
 #include <iostream>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <cstdint>
 
 #include "base/output.h"
 #include "main/main.h"
@@ -209,6 +212,54 @@ bool CommandExecutor::doCommandSingleton(Cmd* cmd)
         if (!status)
         {
           break;
+        }
+      }
+    }
+  }
+
+  std::string baf =
+      d_solver->getOptionInfo("boolabs-file").stringValue();
+  if (!baf.empty())
+  {
+    std::vector<Term> asserts = d_solver->getAssertions();
+    if (!asserts.empty())
+    {
+      Term conj = asserts.size() == 1 ? asserts[0]
+                                      : d_solver->mkTerm(cvc5::Kind::AND, asserts);
+      auto abs = d_solver->getBooleanAbstraction(conj);
+      const std::vector<uint32_t>& cnf = abs.first;
+      const std::unordered_map<uint32_t, Term>& mp = abs.second;
+      size_t numClauses = 0;
+      uint32_t maxVar = 0;
+      for (uint32_t u : cnf)
+      {
+        int32_t lit = static_cast<int32_t>(u);
+        if (lit == 0)
+        {
+          numClauses++;
+        }
+        else
+        {
+          uint32_t v = lit < 0 ? -lit : lit;
+          if (v > maxVar) maxVar = v;
+        }
+      }
+      std::ofstream ofs(baf);
+      ofs << "p cnf " << maxVar << " " << numClauses << std::endl;
+      for (const auto& p : mp)
+      {
+        ofs << "c " << p.first << " " << p.second << std::endl;
+      }
+      for (uint32_t u : cnf)
+      {
+        int32_t lit = static_cast<int32_t>(u);
+        if (lit == 0)
+        {
+          ofs << 0 << std::endl;
+        }
+        else
+        {
+          ofs << lit << ' ';
         }
       }
     }

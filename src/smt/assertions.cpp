@@ -16,6 +16,7 @@
 #include "smt/assertions.h"
 
 #include <sstream>
+#include <utility>
 
 #include "base/modal_exception.h"
 #include "expr/node_algorithm.h"
@@ -38,7 +39,9 @@ namespace smt {
 Assertions::Assertions(Env& env)
     : EnvObj(env),
       d_assertionList(userContext()),
+      d_assertionIsXor(userContext()),
       d_assertionListDefs(userContext()),
+      d_xorAssertionList(userContext()),
       d_globalDefineFunLemmasIndex(userContext(), 0)
 {
 }
@@ -80,6 +83,85 @@ void Assertions::assertFormula(const Node& n)
   addFormula(n, false, maybeHasFv);
 }
 
+void Assertions::assertXorClause(const std::vector<Node>& clause, bool rhs)
+{
+  NodeManager* nm = nodeManager();
+  std::vector<Node> processed;
+  processed.reserve(clause.size());
+  for (const Node& t : clause)
+  {
+    ensureBoolean(t);
+    processed.push_back(t);
+  }
+  Node body;
+  if (processed.empty())
+  {
+    body = nm->mkConst(!rhs);
+  }
+  else if (processed.size() == 1)
+  {
+    body = processed.front();
+  }
+  else
+  {
+    body = nm->mkNode(Kind::XOR, processed);
+  }
+  // Note: 'body' (the d_assertionList entry) is NOT the live path for native
+  // XOR; the XorClause stored below (with d_rhs) is consumed directly by the
+  // CNF stream / SAT backend, so the rhs is applied there, not here.
+  d_assertionList.push_back(body);
+  d_assertionIsXor.push_back(true);
+  // std::cout << "Asserting XOR clause: " << body << std::endl;
+  XorClause info;
+  info.d_clause = std::move(processed);
+  info.d_rhs = rhs;
+  info.d_formula = body;
+  d_xorAssertionList.push_back(info);
+}
+
+void Assertions::assertModpClause(const std::vector<Node>& clause,
+                                  const std::vector<uint64_t>& weights,
+                                  uint64_t rhs,
+                                  uint64_t modulus)
+{
+  NodeManager* nm = nodeManager();
+  std::vector<Node> processed;
+  processed.reserve(clause.size());
+  for (const Node& t : clause)
+  {
+    ensureBoolean(t);
+    processed.push_back(t);
+  }
+  // The registration formula only needs to make the SAT/CNF machinery create
+  // a literal for every term (via toCNF); it is fed to notifyInputFormulas but
+  // never asserted as a constraint (convertAndAssertXorClause does not CNF the
+  // formula itself for a mod-p row). Mirror the XOR path's choice of body.
+  Node body;
+  if (processed.empty())
+  {
+    // Empty sum: constraint is (0 == rhs mod modulus). True iff rhs % mod == 0.
+    body = nm->mkConst((rhs % modulus) == 0);
+  }
+  else if (processed.size() == 1)
+  {
+    body = processed.front();
+  }
+  else
+  {
+    body = nm->mkNode(Kind::XOR, processed);
+  }
+  d_assertionList.push_back(body);
+  d_assertionIsXor.push_back(true);
+  XorClause info;
+  info.d_clause = std::move(processed);
+  info.d_rhs = false;
+  info.d_formula = body;
+  info.d_weights = weights;
+  info.d_modulus = modulus;
+  info.d_rhsValue = rhs;
+  d_xorAssertionList.push_back(info);
+}
+
 std::vector<Node>& Assertions::getAssumptions() { return d_assumptions; }
 
 const context::CDList<Node>& Assertions::getAssertionList() const
@@ -90,6 +172,16 @@ const context::CDList<Node>& Assertions::getAssertionList() const
 const context::CDList<Node>& Assertions::getAssertionListDefinitions() const
 {
   return d_assertionListDefs;
+}
+
+const context::CDList<bool>& Assertions::getAssertionIsXorList() const
+{
+  return d_assertionIsXor;
+}
+
+const context::CDList<XorClause>& Assertions::getXorAssertionList() const
+{
+  return d_xorAssertionList;
 }
 
 std::unordered_set<Node> Assertions::getCurrentAssertionListDefitions() const
@@ -108,6 +200,7 @@ void Assertions::addFormula(TNode n,
 {
   // add to assertion list
   d_assertionList.push_back(n);
+  d_assertionIsXor.push_back(false);
   if (n.isConst() && n.getConst<bool>())
   {
     // true, nothing to do

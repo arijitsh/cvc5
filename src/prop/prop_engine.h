@@ -29,6 +29,7 @@
 #include "prop/learned_db.h"
 #include "prop/skolem_def_manager.h"
 #include "smt/env_obj.h"
+#include "smt/xor_clause.h"
 #include "theory/inference_id.h"
 #include "theory/output_channel.h"
 #include "theory/skolem_lemma.h"
@@ -124,6 +125,8 @@ class PropEngine : protected EnvObj
    */
   void assertInputFormulas(const std::vector<Node>& assertions,
                            std::unordered_map<size_t, Node>& skolemMap);
+  /** Assert native XOR clauses to the SAT solver. */
+  void assertInputXorClauses(const std::vector<smt::XorClause>& clauses);
 
   /**
    * Converts the given formula to CNF and assert the CNF to the SAT solver.
@@ -273,6 +276,8 @@ class PropEngine : protected EnvObj
    * level.
    */
   void resetTrail();
+  /** Enable or disable verbose logging of native XOR clauses. */
+  void setXorClauseVerbose(bool enabled);
 
   /**
    * Get the assertion level of the SAT solver.
@@ -397,7 +402,8 @@ class PropEngine : protected EnvObj
                       bool negated,
                       bool removable,
                       bool input,
-                      ProofGenerator* pg = nullptr);
+                      ProofGenerator* pg = nullptr,
+                      const smt::XorClause* xorClause = nullptr);
   /**
    * Assert lemmas internal, where trn is a trust node corresponding to a
    * formula to assert to the CNF stream, ppLemmas are the skolem definitions

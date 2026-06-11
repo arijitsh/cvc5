@@ -17,9 +17,12 @@
 ##
 
 include(deps-helper)
+include(CheckCXXSourceCompiles)
 
 find_path(CaDiCaL_INCLUDE_DIR NAMES cadical/cadical.hpp cadical/tracer.hpp)
 find_library(CaDiCaL_LIBRARIES NAMES cadical)
+
+set(CVC5_CADICAL_HAS_XOR ON)
 
 set(CaDiCaL_FOUND_SYSTEM FALSE)
 if(CaDiCaL_INCLUDE_DIR AND CaDiCaL_LIBRARIES)
@@ -88,31 +91,40 @@ if(NOT CaDiCaL_FOUND_SYSTEM)
   include(ExternalProject)
 
   set(CaDiCaL_VERSION "rel-2.1.3")
-  set(CaDiCaL_CHECKSUM "abfe890aa4ccda7b8449c7ad41acb113cfb8e7e8fbf5e49369075f9b00d70465")
+  set(CaDiCaL_CHECKSUM "e02c1b14643626918923c38b0e74c8ca2990ef07")
 
   # avoid configure script and instantiate the makefile manually the configure
   # scripts unnecessarily fails for cross compilation thus we do the bare
   # minimum from the configure script here
-  set(CaDiCaL_CXXFLAGS "-fPIC -O3 -DNDEBUG -DQUIET -std=c++11")
+  # CaDiCaL >= rel-2.1.3 requires C++17 (it uses std::optional).  Ensure that
+  # the embedded build enables a compatible language mode instead of relying on
+  # the compiler default, which may be older (e.g. C++14).
+  set(CaDiCaL_COMMON_FLAGS "-fPIC -O3 -DNDEBUG -DQUIET")
+  set(CaDiCaL_CXXFLAGS "${CaDiCaL_COMMON_FLAGS} -std=c++17")
+  set(CaDiCaL_CFLAGS "${CaDiCaL_COMMON_FLAGS}")
   if(CMAKE_CROSSCOMPILING_MACOS)
     set(CaDiCaL_CXXFLAGS "${CaDiCaL_CXXFLAGS} -arch ${CMAKE_OSX_ARCHITECTURES}")
+    set(CaDiCaL_CFLAGS "${CaDiCaL_CFLAGS} -arch ${CMAKE_OSX_ARCHITECTURES}")
   endif()
 
   # check for getc_unlocked
   check_symbol_exists("getc_unlocked" "cstdio" HAVE_UNLOCKED_IO)
   if(NOT HAVE_UNLOCKED_IO)
     string(APPEND CaDiCaL_CXXFLAGS " -DNUNLOCKED")
+    string(APPEND CaDiCaL_CFLAGS " -DNUNLOCKED")
   endif()
   # check for closefrom
   check_symbol_exists("closefrom" "fcntl.h" HAVE_CLOSEFROM)
   if(NOT HAVE_CLOSEFROM)
     string(APPEND CaDiCaL_CXXFLAGS " -DNCLOSEFROM")
+    string(APPEND CaDiCaL_CFLAGS " -DNCLOSEFROM")
   endif()
 
   # On macOS, we have to set `-isysroot` to make sure that include headers are
   # found because they are not necessarily installed at /usr/include anymore.
   if(CMAKE_OSX_SYSROOT)
     string(APPEND CaDiCaL_CXXFLAGS " ${CMAKE_CXX_SYSROOT_FLAG} ${CMAKE_OSX_SYSROOT}")
+    string(APPEND CaDiCaL_CFLAGS " ${CMAKE_CXX_SYSROOT_FLAG} ${CMAKE_OSX_SYSROOT}")
   endif()
 
   if("${CMAKE_GENERATOR}" STREQUAL "Unix Makefiles")
@@ -133,7 +145,9 @@ if(NOT CaDiCaL_FOUND_SYSTEM)
     CaDiCaL-EP
     ${COMMON_EP_CONFIG}
     BUILD_IN_SOURCE ON
-    URL https://github.com/arminbiere/cadical/archive/${CaDiCaL_VERSION}.tar.gz
+    GIT_REPOSITORY https://github.com/arijitsh/cadical.git
+    # GIT_TAG 610f9b7fc14b6b76ccd63901121c8e6fe75ba880   #sc2025
+    GIT_TAG main
     URL_HASH SHA256=${CaDiCaL_CHECKSUM}
     CONFIGURE_COMMAND mkdir -p <SOURCE_DIR>/build
     # avoid configure script, prepare the makefile manually
@@ -142,6 +156,7 @@ if(NOT CaDiCaL_FOUND_SYSTEM)
     COMMAND
       sed -i.orig -e "s,@CXX@,${CMAKE_CXX_COMPILER}," -e
       "s,@CXXFLAGS@,${CaDiCaL_CXXFLAGS}," -e
+      "s,@CFLAGS@,${CaDiCaL_CFLAGS}," -e
       "s,@ROOT@,${CaDiCaL_SOURCE_DIR}," -e "s,@CONTRIB@,no," ${USE_EMAR}
       <SOURCE_DIR>/build/makefile
     BUILD_COMMAND ${make_cmd} -C <SOURCE_DIR>/build libcadical.a
@@ -149,6 +164,8 @@ if(NOT CaDiCaL_FOUND_SYSTEM)
                     <INSTALL_DIR>/lib/libcadical.a
     COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/src/cadical.hpp
             <INSTALL_DIR>/include/cadical/cadical.hpp
+    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/src/gaussian.hpp
+            <INSTALL_DIR>/include/cadical/gaussian.hpp
     COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/src/tracer.hpp
             <INSTALL_DIR>/include/cadical/tracer.hpp
     BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libcadical.a
@@ -156,6 +173,26 @@ if(NOT CaDiCaL_FOUND_SYSTEM)
 
   set(CaDiCaL_INCLUDE_DIR "${DEPS_BASE}/include/")
   set(CaDiCaL_LIBRARIES "${DEPS_BASE}/lib/libcadical.a")
+endif()
+
+if(CaDiCaL_INCLUDE_DIR)
+  set(CMAKE_REQUIRED_INCLUDES ${CaDiCaL_INCLUDE_DIR})
+  check_cxx_source_compiles(
+    "
+    #include <cadical/cadical.hpp>
+    int main()
+    {
+      CaDiCaL::Solver solver;
+      solver.add_xor(0);
+      return 0;
+    }
+    "
+    CVC5_CADICAL_HAS_XOR_CHECK
+  )
+  unset(CMAKE_REQUIRED_INCLUDES)
+  if(CVC5_CADICAL_HAS_XOR_CHECK)
+    set(CVC5_CADICAL_HAS_XOR ON)
+  endif()
 endif()
 
 set(CaDiCaL_FOUND TRUE)

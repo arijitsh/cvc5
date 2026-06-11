@@ -26,6 +26,7 @@
 #include "smt/assertions.h"
 #include "smt/env_obj.h"
 #include "smt/preprocessor.h"
+#include "smt/xor_clause.h"
 #include "theory/logic_info.h"
 #include "util/result.h"
 
@@ -77,6 +78,8 @@ class SmtSolver : protected EnvObj
   void finishInit();
   /** Reset all assertions, global declarations, etc.  */
   void resetAssertions();
+  /** Enable or disable verbose logging of XOR clauses. */
+  void setXorClauseVerbose(bool enabled);
   /**
    * Interrupt a running query.  This can be called from another thread
    * or from a signal handler.  Throws a ModalException if the SmtSolver
@@ -88,6 +91,10 @@ class SmtSolver : protected EnvObj
    * trackPreprocessedAssertions is true.
    */
   const context::CDList<Node>& getPreprocessedAssertions() const;
+  /** Get which of the preprocessed assertions correspond to XOR clauses. */
+  const context::CDList<bool>& getPreprocessedAssertionIsXorList() const;
+  /** Get the sequence of preprocessed XOR clauses. */
+  const context::CDList<XorClause>& getPreprocessedXorClauses() const;
   /**
    * Get the skolem map corresponding to the preprocessed assertions. Only valid
    * if trackPreprocessedAssertions is true.
@@ -141,6 +148,8 @@ class SmtSolver : protected EnvObj
   Preprocessor d_pp;
   /** Assertions manager */
   Assertions d_asserts;
+  /** Whether XOR clause assertions should be logged verbosely. */
+  bool d_xorClauseVerbose = false;
   /** Reference to the statistics of SolverEngine */
   SolverEngineStatistics& d_stats;
   /** The theory engine */
@@ -150,6 +159,10 @@ class SmtSolver : protected EnvObj
   //------------------------------------------ Bookkeeping for deep restarts
   /** The exact list of preprocessed assertions we sent to the PropEngine */
   NodeList d_ppAssertions;
+  /** Flags for whether each preprocessed assertion is an XOR clause. */
+  context::CDList<bool> d_ppAssertionsIsXor;
+  /** Preprocessed native XOR clauses. */
+  context::CDList<XorClause> d_ppXorClauses;
   /** The skolem map associated with d_ppAssertions */
   context::CDHashMap<size_t, Node> d_ppSkolemMap;
 };

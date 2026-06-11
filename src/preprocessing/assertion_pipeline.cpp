@@ -48,6 +48,7 @@ void AssertionPipeline::clear()
   d_nodes.clear();
   d_iteSkolemMap.clear();
   d_substsIndices.clear();
+  d_xorClauses.clear();
 }
 
 void AssertionPipeline::push_back(
@@ -158,6 +159,11 @@ void AssertionPipeline::pushBackTrusted(TrustNode trn,
   Assert(trn.getKind() == TrustNodeKind::LEMMA);
   // push back what was proven
   push_back(trn.getProven(), false, trn.getGenerator(), trustId, ensureRew);
+}
+
+void AssertionPipeline::addXorClause(const smt::XorClause& clause)
+{
+  d_xorClauses.push_back(clause);
 }
 
 void AssertionPipeline::replace(size_t i,

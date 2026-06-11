@@ -171,6 +171,39 @@ void PropEngine::assertInputFormulas(
   d_stats.d_numInputAtoms += (natomsPost - natomsPre);
 }
 
+void PropEngine::assertInputXorClauses(const std::vector<smt::XorClause>& clauses)
+{
+  if (clauses.empty())
+  {
+    return;
+  }
+  Assert(!d_inCheckSat) << "Sat solver in solve()!";
+  std::vector<Node> formulas;
+  formulas.reserve(clauses.size());
+  for (const smt::XorClause& clause : clauses)
+  {
+    formulas.push_back(clause.d_formula);
+  }
+  std::unordered_map<size_t, Node> dummySkolemMap;
+  d_theoryProxy->notifyInputFormulas(formulas, dummySkolemMap);
+  int64_t natomsPre = d_cnfStream->d_stats.d_numAtoms.get();
+  for (size_t i = 0, nclauses = formulas.size(); i < nclauses; ++i)
+  {
+    const Node& node = formulas[i];
+    Trace("prop") << "assertXorClause(" << node << ")" << std::endl;
+    assertInternal(theory::InferenceId::INPUT,
+                    node,
+                    false,
+                    false,
+                    true,
+                    nullptr,
+                    &clauses[i]);
+  }
+  int64_t natomsPost = d_cnfStream->d_stats.d_numAtoms.get();
+  Assert(natomsPost >= natomsPre);
+  d_stats.d_numInputAtoms += (natomsPost - natomsPre);
+}
+
 void PropEngine::assertLemma(theory::InferenceId id,
                              TrustNode tlemma,
                              theory::LemmaProperty p)
@@ -249,7 +282,8 @@ void PropEngine::assertInternal(theory::InferenceId id,
                                 bool negated,
                                 bool removable,
                                 bool input,
-                                ProofGenerator* pg)
+                                ProofGenerator* pg,
+                                const smt::XorClause* xorClause)
 {
   bool addAssumption = false;
   if (isProofEnabled())
@@ -275,7 +309,14 @@ void PropEngine::assertInternal(theory::InferenceId id,
   }
   else
   {
-    d_cnfStream->convertAndAssert(node, removable, negated);
+    if (xorClause != nullptr)
+    {
+      d_cnfStream->convertAndAssertXorClause(*xorClause, removable);
+    }
+    else
+    {
+      d_cnfStream->convertAndAssert(node, removable, negated);
+    }
   }
   if (addAssumption)
   {
@@ -663,6 +704,18 @@ void PropEngine::resetTrail()
 {
   d_satSolver->resetTrail();
   Trace("prop") << "resetTrail()" << std::endl;
+}
+
+void PropEngine::setXorClauseVerbose(bool enabled)
+{
+  if (d_cnfStream != nullptr)
+  {
+    d_cnfStream->setXorClauseVerbose(enabled);
+  }
+  if (d_satSolver != nullptr)
+  {
+    d_satSolver->setXorClauseVerbose(enabled);
+  }
 }
 
 uint32_t PropEngine::getAssertionLevel() const

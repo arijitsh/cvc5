@@ -308,6 +308,26 @@ public class Term extends AbstractPointer implements Comparable<Term>, Iterable<
   private native long xorTerm(long pointer, long termPointer);
 
   /**
+   * Boolean exclusive or.
+   *
+   * @param terms Boolean terms.
+   * @return The exclusive disjunction of this term and the given terms.
+   */
+  public Term xorTerm(Term[] terms)
+  {
+    long[] termPointers = new long[terms.length];
+    for (int i = 0; i < termPointers.length; i++)
+    {
+      termPointers[i] = terms[i].getPointer();
+    }
+
+    long termPointer = xorTerm(pointer, termPointers);
+    return new Term(termPointer);
+  }
+
+  private native long xorTerm(long pointer, long[] termPointers);
+
+  /**
    * Equality.
    *
    * @param t A Boolean term.

@@ -26,6 +26,7 @@
 #include "proof/rewrite_proof_generator.h"
 #include "proof/trust_node.h"
 #include "smt/env_obj.h"
+#include "smt/xor_clause.h"
 
 namespace cvc5::internal {
 
@@ -84,12 +85,20 @@ class AssertionPipeline : protected EnvObj
   void pushBackTrusted(TrustNode trn,
                        TrustId trustId = TrustId::UNKNOWN_PREPROCESS_LEMMA,
                        bool ensureRew = false);
+  /** Append an XOR clause that should be asserted natively to the SAT solver. */
+  void addXorClause(const smt::XorClause& clause);
 
   /**
    * Get the constant reference to the underlying assertions. It is only
    * possible to modify these via the replace methods below.
    */
   const std::vector<Node>& ref() const { return d_nodes; }
+
+  /** Get the XOR clauses that were collected for this pipeline. */
+  const std::vector<smt::XorClause>& getXorClauses() const
+  {
+    return d_xorClauses;
+  }
 
   std::vector<Node>::const_iterator begin() const { return d_nodes.cbegin(); }
   std::vector<Node>::const_iterator end() const { return d_nodes.cend(); }
@@ -198,6 +207,8 @@ class AssertionPipeline : protected EnvObj
   /** Boolean constants */
   Node d_true;
   Node d_false;
+  /** Native XOR clauses asserted alongside d_nodes. */
+  std::vector<smt::XorClause> d_xorClauses;
   /** The list of current assertions */
   std::vector<Node> d_nodes;
 

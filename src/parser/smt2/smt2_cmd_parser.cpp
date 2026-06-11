@@ -72,6 +72,8 @@ Smt2CmdParser::Smt2CmdParser(Smt2Lexer& lex,
     d_table["declare-heap"] = Token::DECLARE_HEAP_TOK;
     d_table["declare-oracle-fun"] = Token::DECLARE_ORACLE_FUN_TOK;
     d_table["declare-pool"] = Token::DECLARE_POOL_TOK;
+    d_table["declare-projvar"] = Token::DECLARE_PROJVAR_TOK;
+    d_table["declare-weight"] = Token::DECLARE_WEIGHT_TOK;
     d_table["find-synth"] = Token::FIND_SYNTH_TOK;
     d_table["find-synth-next"] = Token::FIND_SYNTH_NEXT_TOK;
     d_table["get-abduct-next"] = Token::GET_ABDUCT_NEXT_TOK;
@@ -323,7 +325,8 @@ std::unique_ptr<Cmd> Smt2CmdParser::parseNextCommand()
         binName = d_tparser.parseSymbol(CHECK_NONE, SYM_VARIABLE);
       }
       // not supported
-      d_state.warning("Oracles not supported via the text interface in this version");
+      d_state.warning(
+          "Oracles not supported via the text interface in this version");
       cmd.reset(new EmptyCommand());
     }
     break;
@@ -337,6 +340,31 @@ std::unique_ptr<Cmd> Smt2CmdParser::parseNextCommand()
       std::vector<Term> terms = d_tparser.parseTermList();
       Trace("parser") << "declare pool: '" << name << "'" << std::endl;
       cmd.reset(new DeclarePoolCommand(name, t, terms));
+    }
+    break;
+    // (declare-projvar <symbol>+)
+    case Token::DECLARE_PROJVAR_TOK:
+    {
+      d_state.checkThatLogicIsSet();
+      std::vector<Term> vars;
+      Token ntok = d_lex.peekToken();
+      while (ntok != Token::RPAREN_TOK)
+      {
+        std::string name = d_tparser.parseSymbol(CHECK_DECLARED, SYM_VARIABLE);
+        vars.push_back(d_state.getVariable(name));
+        ntok = d_lex.peekToken();
+      }
+      cmd.reset(new DeclareProjVarCommand(vars));
+    }
+    break;
+    // (declare-weight <symbol> <numeral>)
+    case Token::DECLARE_WEIGHT_TOK:
+    {
+      d_state.checkThatLogicIsSet();
+      std::string name = d_tparser.parseSymbol(CHECK_DECLARED, SYM_VARIABLE);
+      uint32_t weight = d_tparser.parseIntegerNumeral();
+      Term var = d_state.getVariable(name);
+      cmd.reset(new DeclareWeightCommand(var, weight));
     }
     break;
     // (declare-sort <symbol> <numeral>)
@@ -886,7 +914,7 @@ std::unique_ptr<Cmd> Smt2CmdParser::parseNextCommand()
       {
         ss = d_state.stripQuotes(ss);
       }
-      else if (key=="use-portfolio")
+      else if (key == "use-portfolio")
       {
         // we don't allow setting portfolio via the command line
         d_lex.parseError("Can only enable use-portfolio via the command line");

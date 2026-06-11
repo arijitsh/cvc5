@@ -2025,6 +2025,22 @@ public class Solver extends AbstractPointer
 
   private native void assertFormula(long pointer, long termPointer);
 
+  public void assertXorClause(Term[] terms, boolean rhs)
+  {
+    assertXorClause(pointer, Utils.getPointers(terms), rhs);
+  }
+
+  private native void assertXorClause(long pointer,
+                                      long[] termPointers,
+                                      boolean rhs);
+
+  public void setXorAssertionVerbose(boolean enabled)
+  {
+    setXorAssertionVerbose(pointer, enabled);
+  }
+
+  private native void setXorAssertionVerbose(long pointer, boolean enabled);
+
   /**
    * Check satisfiability.
    *

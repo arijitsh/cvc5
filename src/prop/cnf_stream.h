@@ -33,6 +33,7 @@
 #include "prop/registrar.h"
 #include "prop/sat_solver_types.h"
 #include "smt/env_obj.h"
+#include "smt/xor_clause.h"
 #include "util/statistics_stats.h"
 
 namespace cvc5::internal {
@@ -108,6 +109,8 @@ class CnfStream : protected EnvObj
    * @param negated whether we are asserting the node negated
    */
   void convertAndAssert(TNode node, bool removable, bool negated);
+  /** Assert a native XOR clause represented by clause. */
+  void convertAndAssertXorClause(const smt::XorClause& clause, bool removable);
   /**
    * Get the node that is represented by the given SatLiteral.
    * @param literal the literal from the sat solver
@@ -200,6 +203,8 @@ class CnfStream : protected EnvObj
   void dumpDimacs(std::ostream& out,
                   const std::vector<Node>& clauses,
                   const std::vector<Node>& auxUnits);
+  /** Enable or disable verbose logging of XOR clauses. */
+  void setXorClauseVerbose(bool enabled);
 
  protected:
   /** Helper function */
@@ -244,6 +249,8 @@ class CnfStream : protected EnvObj
   void handleIte(TNode node);
   void handleAnd(TNode node);
   void handleOr(TNode node);
+  /** Collect the literals and parity of the given XOR node. */
+  void collectXorClause(TNode node, SatClause& clause, bool& parity);
 
   /** Stores the literal of the given node in d_literalToNodeMap.
    *
@@ -352,7 +359,13 @@ class CnfStream : protected EnvObj
   /** Pointer to resource manager for associated SolverEngine */
   ResourceManager* d_resourceManager;
 
+  /** Whether to print information about XOR clauses forwarded to the SAT solver. */
+  bool d_xorClauseVerbose = false;
+
  private:
+  /** Return true if native XOR clauses should be forwarded to the SAT solver. */
+  bool useNativeXor() const;
+
   struct Statistics
   {
     Statistics(StatisticsRegistry& sr, const std::string& name);

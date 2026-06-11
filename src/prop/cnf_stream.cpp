@@ -21,6 +21,7 @@
 #include "base/output.h"
 #include "expr/node.h"
 #include "options/bv_options.h"
+#include "options/prop_options.h"
 #include "printer/printer.h"
 #include "proof/clause_id.h"
 #include "prop/minisat/minisat.h"
@@ -303,13 +304,62 @@ SatLiteral CnfStream::getLiteral(TNode node) {
   return literal;
 }
 
+void CnfStream::collectXorClause(TNode node, SatClause& clause, bool& parity)
+{
+  if (node.getKind() == Kind::XOR)
+  {
+    for (const Node& child : node)
+    {
+      collectXorClause(child, clause, parity);
+    }
+    return;
+  }
+  if (node.getKind() == Kind::CONST_BOOLEAN)
+  {
+    if (node.getConst<bool>())
+    {
+      parity = !parity;
+    }
+    return;
+  }
+  clause.push_back(toCNF(node, false));
+}
+
 void CnfStream::handleXor(TNode xorNode)
 {
   Assert(!hasLiteral(xorNode)) << "Atom already mapped!";
   Assert(xorNode.getKind() == Kind::XOR) << "Expecting an XOR expression!";
-  Assert(xorNode.getNumChildren() == 2) << "Expecting exactly 2 children!";
   Assert(!d_removable) << "Removable clauses can not contain Boolean structure";
   Trace("cnf") << "CnfStream::handleXor(" << xorNode << ")\n";
+
+  if (useNativeXor() && d_satSolver->nativeXor())
+  {
+    SatClause clause;
+    bool parity = false;
+    collectXorClause(xorNode, clause, parity);
+    SatLiteral xorLit = newLiteral(xorNode);
+    clause.push_back(xorLit);
+    if (d_xorClauseVerbose)
+    {
+      std::ostream* out = &std::cout;
+      if (out != nullptr)
+      {
+        *out << "[cvc5] native XOR def " << xorNode << " -> (";
+        for (size_t i = 0, n = clause.size(); i < n; ++i)
+        {
+          if (i > 0)
+          {
+            *out << ' ';
+          }
+          *out << clause[i].toString();
+        }
+        *out << ") = " << (parity ? "true" : "false") << std::endl;
+      }
+    }
+    d_satSolver->addXorClause(clause, parity, false);
+    return;
+  }
+  Assert(xorNode.getNumChildren() == 2) << "Expecting exactly 2 children!";
 
   SatLiteral a = getLiteral(xorNode[0]);
   SatLiteral b = getLiteral(xorNode[1]);
@@ -609,6 +659,47 @@ void CnfStream::convertAndAssertXor(TNode node, bool negated)
   Assert(node.getKind() == Kind::XOR);
   Trace("cnf") << "CnfStream::convertAndAssertXor(" << node
                << ", negated = " << (negated ? "true" : "false") << ")\n";
+  if (useNativeXor() && d_satSolver->nativeXor())
+  {
+    SatClause clause;
+    bool parity = false;
+    collectXorClause(node, clause, parity);
+    bool rhs = (!negated) ^ parity;
+    if (d_xorClauseVerbose)
+    {
+      std::ostream* out = &std::cout;
+      if (out != nullptr)
+      {
+        Node printed = negated ? node.notNode() : Node(node);
+        *out << "[cvc5] native XOR " << printed << " -> (";
+        for (size_t i = 0, n = clause.size(); i < n; ++i)
+        {
+          if (i > 0)
+          {
+            *out << ' ';
+          }
+          *out << clause[i].toString();
+        }
+        *out << ") = " << (rhs ? "true" : "false") << std::endl;
+      }
+    }
+    if (clause.empty())
+    {
+      if (rhs)
+      {
+        SatClause empty;
+        Node clauseNode = node;
+        if (negated)
+        {
+          clauseNode = node.negate();
+        }
+        assertClause(clauseNode, empty);
+      }
+      return;
+    }
+    d_satSolver->addXorClause(clause, rhs, d_removable);
+    return;
+  }
   if (!negated) {
     // p XOR q
     SatLiteral p = toCNF(node[0], false);
@@ -734,6 +825,60 @@ void CnfStream::convertAndAssert(TNode node, bool removable, bool negated)
   convertAndAssert(node, negated);
 }
 
+void CnfStream::convertAndAssertXorClause(const smt::XorClause& clause,
+                                          bool removable)
+{
+  Trace("cnf") << "convertAndAssertXorClause(" << clause.d_formula
+               << ", removable = " << (removable ? "true" : "false") << ")\n";
+  d_removable = removable;
+  TimerStat::CodeTimer codeTimer(d_stats.d_cnfConversionTime, true);
+  resourceManager()->spendResource(Resource::CnfStep);
+
+  // Mod-p (prime hash) row: map each literal to a SAT literal (preserving sign;
+  // the propagator folds negations) and forward to the SAT solver's Z_p
+  // Gauss-Jordan engine together with the per-literal weights and the modulus.
+  if (clause.d_modulus != 0)
+  {
+    SatClause satClause;
+    satClause.reserve(clause.d_clause.size());
+    for (const Node& lit : clause.d_clause)
+    {
+      satClause.push_back(toCNF(lit, false));
+    }
+    d_satSolver->addModpClause(
+        satClause, clause.d_weights, clause.d_rhsValue, clause.d_modulus);
+    return;
+  }
+
+  SatClause satClause;
+  satClause.reserve(clause.d_clause.size());
+  bool rhs = clause.d_rhs;
+  for (const Node& lit : clause.d_clause)
+  {
+    if (lit.getKind() == Kind::CONST_BOOLEAN)
+    {
+      if (lit.getConst<bool>())
+      {
+        rhs = !rhs;
+      }
+      continue;
+    }
+    satClause.push_back(toCNF(lit, false));
+    // std::cout << lit  << "  literal: " << satClause.back() << "\n";
+  }
+  if (satClause.empty())
+  {
+    if (rhs)
+    {
+      SatClause empty;
+      assertClause(clause.d_formula, empty);
+    }
+    return;
+  }
+  // std::cout << "XOR clause size: " << satClause.size() << "\n";
+  d_satSolver->addXorClause(satClause, rhs, d_removable);
+}
+
 void CnfStream::convertAndAssert(TNode node, bool negated)
 {
   Trace("cnf") << "convertAndAssert(" << node
@@ -767,6 +912,11 @@ void CnfStream::convertAndAssert(TNode node, bool negated)
   }
     break;
   }
+}
+
+bool CnfStream::useNativeXor() const
+{
+  return options().prop.satUseNativeXor;
 }
 
 CnfStream::Statistics::Statistics(StatisticsRegistry& sr,
@@ -821,6 +971,11 @@ void CnfStream::dumpDimacs(std::ostream& out,
   out << "p cnf " << maxVar << " " << (clauses.size() + auxUnits.size())
       << std::endl;
   out << dclauses.str();
+}
+
+void CnfStream::setXorClauseVerbose(bool enabled)
+{
+  d_xorClauseVerbose = enabled;
 }
 
 }  // namespace prop

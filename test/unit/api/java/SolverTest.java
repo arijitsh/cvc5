@@ -1735,6 +1735,18 @@ class SolverTest
   }
 
   @Test
+  void assertXorClause()
+  {
+    Term a = d_solver.mkConst(d_solver.getBooleanSort(), "a");
+    Term b = d_solver.mkConst(d_solver.getBooleanSort(), "b");
+    d_solver.setXorAssertionVerbose(true);
+    d_solver.assertXorClause(new Term[] {a, b}, true);
+    d_solver.assertFormula(a.eqTerm(b));
+    assertEquals(Result.Status.UNSAT, d_solver.checkSat().getStatus());
+    d_solver.setXorAssertionVerbose(false);
+  }
+
+  @Test
   void checkSat() throws CVC5ApiException
   {
     d_solver.setOption("incremental", "false");

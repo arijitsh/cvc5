@@ -14,6 +14,7 @@
  */
 
 #include <cvc5/cvc5.h>
+#include <vector>
 
 #include "api/java/jni/api_utilities.h"
 #include "api_plugin.h"
@@ -113,6 +114,48 @@ JNIEXPORT void JNICALL Java_io_github_cvc5_Solver_assertFormula(
   Solver* solver = reinterpret_cast<Solver*>(pointer);
   Term* term = reinterpret_cast<Term*>(termPointer);
   solver->assertFormula(*term);
+  CVC5_JAVA_API_TRY_CATCH_END(env);
+}
+
+/*
+ * Class:     io_github_cvc5_Solver
+ * Method:    assertXorClause
+ * Signature: (J[JJZ)V
+ */
+JNIEXPORT void JNICALL
+Java_io_github_cvc5_Solver_assertXorClause(JNIEnv* env,
+                                           jobject,
+                                           jlong pointer,
+                                           jlongArray termPointers,
+                                           jboolean rhs)
+{
+  CVC5_JAVA_API_TRY_CATCH_BEGIN;
+  Solver* solver = reinterpret_cast<Solver*>(pointer);
+  jsize size = env->GetArrayLength(termPointers);
+  std::vector<Term> terms;
+  terms.reserve(static_cast<size_t>(size));
+  jlong* raw = env->GetLongArrayElements(termPointers, nullptr);
+  for (jsize i = 0; i < size; ++i)
+  {
+    Term* term = reinterpret_cast<Term*>(raw[i]);
+    terms.emplace_back(*term);
+  }
+  env->ReleaseLongArrayElements(termPointers, raw, JNI_ABORT);
+  solver->assertXorClause(terms, rhs);
+  CVC5_JAVA_API_TRY_CATCH_END(env);
+}
+
+/*
+ * Class:     io_github_cvc5_Solver
+ * Method:    setXorAssertionVerbose
+ * Signature: (JZ)V
+ */
+JNIEXPORT void JNICALL Java_io_github_cvc5_Solver_setXorAssertionVerbose(
+    JNIEnv* env, jobject, jlong pointer, jboolean enabled)
+{
+  CVC5_JAVA_API_TRY_CATCH_BEGIN;
+  Solver* solver = reinterpret_cast<Solver*>(pointer);
+  solver->setXorAssertionVerbose(enabled);
   CVC5_JAVA_API_TRY_CATCH_END(env);
 }
 

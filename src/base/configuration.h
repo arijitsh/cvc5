@@ -103,6 +103,8 @@ public:
 
   static bool isBuiltWithCryptominisat();
 
+  static bool isBuiltWithCadicalXor();
+
   static bool isBuiltWithKissat();
 
   static bool isBuiltWithEditline();

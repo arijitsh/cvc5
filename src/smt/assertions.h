@@ -24,6 +24,7 @@
 #include "context/cdo.h"
 #include "expr/node.h"
 #include "smt/env_obj.h"
+#include "smt/xor_clause.h"
 
 namespace cvc5::internal {
 
@@ -77,6 +78,17 @@ class Assertions : protected EnvObj
    * @throw TypeCheckingException, LogicException
    */
   void assertFormula(const Node& n);
+  /** Assert an XOR clause represented by Boolean literals and a parity. */
+  void assertXorClause(const std::vector<Node>& clause, bool rhs);
+  /**
+   * Assert a linear-over-Z_p (prime hash) row: sum_i weights[i]*clause[i] ==
+   * rhs (mod modulus). Stored as a XorClause with d_modulus != 0; the CNF
+   * stream routes it to the SAT solver's mod-p (Gauss-Jordan) engine.
+   */
+  void assertModpClause(const std::vector<Node>& clause,
+                        const std::vector<uint64_t>& weights,
+                        uint64_t rhs,
+                        uint64_t modulus);
   /**
    * Assert that n corresponds to an assertion from a define-fun or
    * define-fun-rec command.
@@ -96,6 +108,10 @@ class Assertions : protected EnvObj
    * that correspond to definitions (define-fun or define-fun-rec).
    */
   const context::CDList<Node>& getAssertionListDefinitions() const;
+  /** Get whether the i^th assertion corresponds to an XOR clause. */
+  const context::CDList<bool>& getAssertionIsXorList() const;
+  /** Get the list of asserted XOR clauses. */
+  const context::CDList<XorClause>& getXorAssertionList() const;
   /** Get the set corresponding to the above */
   std::unordered_set<Node> getCurrentAssertionListDefitions() const;
   /**
@@ -131,8 +147,15 @@ class Assertions : protected EnvObj
    * The assertion list (before any conversion) for supporting getAssertions().
    */
   AssertionList d_assertionList;
+  /** Flags indicating whether each assertion corresponds to an XOR clause. */
+  context::CDList<bool> d_assertionIsXor;
   /** The subset of above the correspond to define-fun or define-fun-rec */
   AssertionList d_assertionListDefs;
+  /**
+   * The sequence of native XOR clause assertions, in the order in which they
+   * were asserted. Entries align with the true values in d_assertionIsXor.
+   */
+  context::CDList<XorClause> d_xorAssertionList;
   /**
    * List of lemmas generated for global (recursive) function definitions. We
    * assert this list of definitions in each check-sat call.

@@ -491,6 +491,10 @@ class TermTest
     assertThrows(CVC5ApiException.class, () -> p_f_x.xorTerm(sum));
     assertDoesNotThrow(() -> p_f_x.xorTerm(p_0));
     assertDoesNotThrow(() -> p_f_x.xorTerm(p_f_x));
+
+    assertDoesNotThrow(() -> b.xorTerm(new Term[] {b}));
+    assertDoesNotThrow(() -> b.xorTerm(new Term[] {b, p_0}));
+    assertThrows(CVC5ApiException.class, () -> b.xorTerm(new Term[] {x}));
   }
 
   @Test

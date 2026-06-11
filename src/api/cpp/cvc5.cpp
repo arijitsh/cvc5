@@ -33,6 +33,7 @@
 #include <cvc5/cvc5.h>
 
 #include <cstring>
+#include <functional>
 #include <sstream>
 
 #include "api/cpp/cvc5_checks.h"
@@ -64,15 +65,26 @@
 #include "options/options_public.h"
 #include "options/quantifiers_options.h"
 #include "options/smt_options.h"
+#include "context/context.h"
+#include "prop/cnf_stream.h"
+#include "prop/registrar.h"
+#include "prop/sat_solver.h"
+#include "proof/clause_id.h"
 #include "proof/proof_node.h"
 #include "proof/unsat_core.h"
 #include "smt/env.h"
 #include "smt/model.h"
 #include "smt/smt_mode.h"
 #include "smt/solver_engine.h"
+#include "expr/skolem_manager.h"
+#include "smt/term_formula_removal.h"
 #include "theory/arith/nl/poly_conversion.h"
+#include "theory/bv/bitblast/node_bitblaster.h"
+#include "theory/bv/theory_bv_utils.h"
 #include "theory/datatypes/project_op.h"
 #include "theory/logic_info.h"
+#include "theory/rewriter.h"
+#include "theory/skolem_lemma.h"
 #include "theory/theory_model.h"
 #include "util/bitvector.h"
 #include "util/divisible.h"
@@ -108,11 +120,9 @@ struct APIStatistics
 /* Kind                                                                       */
 /* -------------------------------------------------------------------------- */
 
-#define KIND_ENUM(external_name, internal_name)                              \
-  {                                                                          \
-    external_name,                                                           \
-        std::make_pair(internal_name, std::string(#external_name).substr(6)) \
-  }
+#define KIND_ENUM(external_name, internal_name) \
+  {external_name,                               \
+   std::make_pair(internal_name, std::string(#external_name).substr(6))}
 
 /* Mapping from external (API) kind to internal kind. */
 const static std::unordered_map<Kind, std::pair<internal::Kind, std::string>>
@@ -467,11 +477,9 @@ const static std::unordered_map<Kind, std::pair<internal::Kind, std::string>>
 /* SortKind                                                                   */
 /* -------------------------------------------------------------------------- */
 
-#define SORT_KIND_ENUM(external_name, internal_name)                          \
-  {                                                                           \
-    external_name,                                                            \
-        std::make_pair(internal_name, std::string(#external_name).substr(10)) \
-  }
+#define SORT_KIND_ENUM(external_name, internal_name) \
+  {external_name,                                    \
+   std::make_pair(internal_name, std::string(#external_name).substr(10))}
 
 /* Mapping from external (API) kind to internal kind. */
 const static std::unordered_map<SortKind,
@@ -2783,6 +2791,32 @@ Term Term::xorTerm(const Term& t) const
   internal::Node res = d_node->xorNode(*t.d_node);
   (void)res.getType(true); /* kick off type checking */
   return Term(d_tm, res);
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+Term Term::xorTerm(const std::vector<Term>& terms) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_CHECK_NOT_NULL;
+  //////// all checks before this line
+  internal::Node res = *d_node;
+  for (const Term& term : terms)
+  {
+    CVC5_API_CHECK_TERM(term);
+    res = res.xorNode(*term.d_node);
+  }
+  (void)res.getType(true); /* kick off type checking */
+  return Term(d_tm, res);
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+Term Term::xorTerm(std::initializer_list<Term> terms) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  //////// all checks before this line
+  return xorTerm(std::vector<Term>(terms));
   ////////
   CVC5_API_TRY_CATCH_END;
 }
@@ -7312,6 +7346,43 @@ void Solver::assertFormula(const Term& term) const
   CVC5_API_TRY_CATCH_END;
 }
 
+void Solver::assertXorClause(const std::vector<Term>& terms, bool rhs) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERMS_WITH_SORT(terms, getBooleanSort());
+  ensureWellFormedTerms(terms);
+  //////// all checks before this line
+  d_slv->assertXorClause(Term::termVectorToNodes(terms), rhs);
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+void Solver::assertModpClause(const std::vector<Term>& terms,
+                              const std::vector<uint64_t>& weights,
+                              uint64_t rhs,
+                              uint64_t modulus) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERMS_WITH_SORT(terms, getBooleanSort());
+  ensureWellFormedTerms(terms);
+  CVC5_API_CHECK(weights.size() == terms.size())
+      << "assertModpClause: weights and terms must have the same length";
+  CVC5_API_CHECK(modulus > 1)
+      << "assertModpClause: modulus must be greater than 1";
+  //////// all checks before this line
+  d_slv->assertModpClause(
+      Term::termVectorToNodes(terms), weights, rhs, modulus);
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+void Solver::setXorAssertionVerbose(bool enabled) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  d_slv->setXorAssertionVerbose(enabled);
+  CVC5_API_TRY_CATCH_END;
+}
+
 Result Solver::checkSat(void) const
 {
   CVC5_API_TRY_CATCH_BEGIN;
@@ -8361,6 +8432,30 @@ Term Solver::declarePool(const std::string& symbol,
   CVC5_API_TRY_CATCH_END;
 }
 
+void Solver::declareProjVar(const std::vector<Term>& vars) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERMS(vars);
+  //////// all checks before this line
+  std::vector<internal::Node> nvars = Term::termVectorToNodes(vars);
+  for (const internal::Node& n : nvars)
+  {
+    d_slv->declareProjVar(n);
+  }
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+void Solver::declareWeight(const Term& var, uint32_t weight) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERM(var);
+  //////// all checks before this line
+  d_slv->declareWeight(*var.d_node, weight);
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
 Term Solver::declareOracleFun(
     const std::string& symbol,
     const std::vector<Sort>& sorts,
@@ -8583,6 +8678,365 @@ std::string Solver::getInstantiations() const
   CVC5_API_TRY_CATCH_END;
 }
 
+std::pair<std::vector<uint32_t>, std::unordered_map<uint32_t, Term>>
+Solver::getBooleanAbstraction(const Term& formula) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERM(formula);
+  CVC5_API_SOLVER_CHECK_TERM_WITH_SORT(formula, getBooleanSort());
+  ensureWellFormedTerm(formula);
+  //////// all checks before this line
+  using namespace internal::prop;
+  using internal::Node;
+  struct RecordingSatSolver : public SatSolver
+  {
+    SatVariable d_nextVar = 0;
+    std::vector<SatClause> d_clauses;
+    internal::ClauseId addClause(SatClause& c, bool) override
+    {
+      d_clauses.emplace_back(c.begin(), c.end());
+      return internal::ClauseIdUndef;
+    }
+    internal::ClauseId addXorClause(SatClause& c, bool, bool) override
+    {
+      d_clauses.emplace_back(c.begin(), c.end());
+      return internal::ClauseIdUndef;
+    }
+    SatVariable newVar(bool, bool) override { return d_nextVar++; }
+    SatVariable trueVar() override { return d_nextVar++; }
+    SatVariable falseVar() override { return d_nextVar++; }
+    SatValue solve() override { return SAT_VALUE_UNKNOWN; }
+    SatValue solve(long unsigned&) override { return SAT_VALUE_UNKNOWN; }
+    void interrupt() override {}
+    SatValue value(SatLiteral) override { return SAT_VALUE_UNKNOWN; }
+    SatValue modelValue(SatLiteral) override { return SAT_VALUE_UNKNOWN; }
+    uint32_t getAssertionLevel() const override { return 0; }
+    bool ok() const override { return true; }
+  };
+
+  RecordingSatSolver rss;
+  context::Context c;
+  internal::prop::NullRegistrar reg;
+  CnfStream cs(
+      d_slv->getEnv(), &rss, &reg, &c, FormulaLitPolicy::TRACK_AND_NOTIFY_VAR);
+  cs.convertAndAssert(formula.getNode(), false, false);
+
+  std::vector<uint32_t> cnf;
+  for (const SatClause& cl : rss.d_clauses)
+  {
+    for (SatLiteral lit : cl)
+    {
+      int32_t v = static_cast<int32_t>(lit.getSatVariable()) + 1;
+      if (lit.isNegated()) v = -v;
+      cnf.push_back(static_cast<uint32_t>(v));
+    }
+    cnf.push_back(0);
+  }
+
+  std::unordered_map<uint32_t, Term> mp;
+  const auto& cache = cs.getNodeCache();
+  for (const auto& p : cache)
+  {
+    SatLiteral lit = p.first;
+    if (!lit.isNegated())
+    {
+      mp.emplace(static_cast<uint32_t>(lit.getSatVariable()) + 1,
+                 Term(&d_tm, p.second));
+    }
+  }
+  return {cnf, mp};
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+std::tuple<std::vector<uint32_t>, uint32_t, std::vector<uint32_t>>
+Solver::getBitblastedCnf(const Term& formula,
+                         const std::vector<Term>& projectionVars) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_SOLVER_CHECK_TERM(formula);
+  CVC5_API_SOLVER_CHECK_TERM_WITH_SORT(formula, getBooleanSort());
+  ensureWellFormedTerm(formula);
+  for (const Term& v : projectionVars)
+  {
+    CVC5_API_SOLVER_CHECK_TERM(v);
+  }
+  //////// all checks before this line
+  using namespace internal::prop;
+  using internal::Node;
+  using internal::TNode;
+  namespace bv = internal::theory::bv;
+
+  internal::NodeManager* nm = formula.getNode().getNodeManager();
+
+  // Ackermannize uninterpreted-function applications (QF_UFBV). Each
+  // application f(args) is replaced by a fresh purification skolem, and for
+  // every pair of applications of the same function symbol a
+  // functional-consistency constraint (args_a = args_b) => (k_a = k_b) is
+  // added. This turns the formula into a pure bit-vector formula whose
+  // bit-vector models (over the original variables) are preserved.
+  Node inputFormula = formula.getNode();
+  {
+    std::unordered_map<Node, std::vector<Node>> funcToApps;
+    std::vector<TNode> work{inputFormula};
+    std::unordered_set<TNode> seen;
+    while (!work.empty())
+    {
+      TNode cur = work.back();
+      work.pop_back();
+      if (!seen.insert(cur).second) continue;
+      if (cur.getKind() == internal::Kind::APPLY_UF)
+      {
+        funcToApps[cur.getOperator()].push_back(cur);
+      }
+      for (TNode child : cur)
+      {
+        work.push_back(child);
+      }
+    }
+
+    if (!funcToApps.empty())
+    {
+      std::unordered_map<Node, Node> appToSkolem;
+      std::vector<Node> conj;
+      conj.push_back(inputFormula);
+      for (const auto& entry : funcToApps)
+      {
+        const std::vector<Node>& apps = entry.second;
+        for (const Node& app : apps)
+        {
+          appToSkolem.emplace(app, internal::SkolemManager::mkPurifySkolem(app));
+        }
+        for (size_t i = 0; i < apps.size(); ++i)
+        {
+          for (size_t j = i + 1; j < apps.size(); ++j)
+          {
+            const Node& a = apps[i];
+            const Node& b = apps[j];
+            std::vector<Node> eqs;
+            for (size_t k = 0, n = a.getNumChildren(); k < n; ++k)
+            {
+              eqs.push_back(nm->mkNode(internal::Kind::EQUAL, a[k], b[k]));
+            }
+            Node argsEq =
+                eqs.size() == 1 ? eqs[0] : nm->mkNode(internal::Kind::AND, eqs);
+            Node funcEq = nm->mkNode(internal::Kind::EQUAL, a, b);
+            conj.push_back(nm->mkNode(internal::Kind::IMPLIES, argsEq, funcEq));
+          }
+        }
+      }
+      Node combined =
+          conj.size() == 1 ? conj[0] : nm->mkNode(internal::Kind::AND, conj);
+
+      // Replace applications top-down: an outermost application f(g(x)) is
+      // replaced by its skolem without descending into g(x). (Node::substitute
+      // is bottom-up and would leave the outer application of a nested term
+      // unmatched.)
+      std::unordered_map<Node, Node> subCache;
+      std::function<Node(TNode)> applySub = [&](TNode n) -> Node {
+        auto sk = appToSkolem.find(n);
+        if (sk != appToSkolem.end()) return sk->second;
+        auto cached = subCache.find(n);
+        if (cached != subCache.end()) return cached->second;
+        if (n.getNumChildren() == 0)
+        {
+          return n;
+        }
+        std::vector<Node> children;
+        if (n.getMetaKind() == internal::kind::metakind::PARAMETERIZED)
+        {
+          children.push_back(n.getOperator());
+        }
+        for (const Node& child : n)
+        {
+          children.push_back(applySub(child));
+        }
+        Node res = nm->mkNode(n.getKind(), children);
+        subCache.emplace(n, res);
+        return res;
+      };
+      inputFormula = applySub(combined);
+    }
+  }
+
+  // Remove term-level formulas (term ITEs, Boolean terms, lambdas, choice) by
+  // introducing skolems with defining axioms. The node bit-blaster only knows
+  // how to bit-blast bit-vector operators (it treats e.g. a term-level ITE as
+  // an opaque variable), so this step is essential for correctness: it lifts
+  // such constructs into the Boolean skeleton where they get bit-blasted and
+  // constrained. The transformation is model-preserving over the original
+  // variables because each skolem is functionally defined by its axiom.
+  internal::RemoveTermFormulas rtf(d_slv->getEnv());
+  std::vector<internal::theory::SkolemLemma> skolemLemmas;
+  internal::TrustNode rtfNode =
+      rtf.run(inputFormula, skolemLemmas, /*fixedPoint=*/true);
+  Node processed = rtfNode.isNull() ? inputFormula : rtfNode.getNode();
+
+  std::vector<Node> conjuncts;
+  conjuncts.push_back(processed);
+  for (const internal::theory::SkolemLemma& sl : skolemLemmas)
+  {
+    conjuncts.push_back(sl.getProven());
+  }
+  Node fullFormula = conjuncts.size() == 1
+                         ? conjuncts[0]
+                         : nm->mkNode(internal::Kind::AND, conjuncts);
+
+  // Bit-blast every bit-vector atom of the formula to a Boolean circuit over
+  // the individual bits of the bit-vector variables. We pass a null
+  // TheoryState because we never query model values from the SAT solver here.
+  bv::NodeBitblaster bb(d_slv->getEnv(), nullptr);
+
+  internal::theory::Rewriter* rewriter = d_slv->getEnv().getRewriter();
+
+  // A Boolean node is a theory atom (here, a bit-vector predicate such as
+  // EQUAL, DISTINCT, or a comparison) iff at least one of its children is not
+  // Boolean. Such atoms must be bit-blasted; purely Boolean connectives form
+  // the skeleton that is rebuilt structurally.
+  auto isTheoryAtom = [](TNode n) {
+    if (!n.getType().isBoolean() || n.getNumChildren() == 0) return false;
+    for (const Node& child : n)
+    {
+      if (!child.getType().isBoolean()) return true;
+    }
+    return false;
+  };
+
+  // Rebuild the Boolean skeleton, replacing every bit-vector atom by its
+  // bit-blasted Boolean definition. The result is a pure Boolean formula.
+  std::unordered_map<Node, Node> rebuilt;
+  std::function<Node(TNode)> rebuild = [&](TNode n) -> Node {
+    auto cached = rebuilt.find(n);
+    if (cached != rebuilt.end()) return cached->second;
+    Node res;
+    if (isTheoryAtom(n))
+    {
+      // Normalize the atom first. Rewriting may turn it into a different atom
+      // (e.g. DISTINCT into NOT EQUAL), expose Boolean structure (e.g.
+      // (bvsle 1 (bvand x 7)) becomes a disjunction of bits), or fold it to a
+      // constant. Only a genuine, fully-normalized predicate is bit-blasted
+      // directly; anything else is recursed into.
+      Node r = rewriter->rewrite(n);
+      if (r != Node(n))
+      {
+        res = rebuild(r);
+      }
+      else
+      {
+        bb.bbAtom(r);
+        res = bb.getStoredBBAtom(r);
+      }
+    }
+    else if (n.getNumChildren() == 0 || !n.getType().isBoolean())
+    {
+      res = n;
+    }
+    else
+    {
+      std::vector<Node> children;
+      if (n.getMetaKind() == internal::kind::metakind::PARAMETERIZED)
+      {
+        children.push_back(n.getOperator());
+      }
+      for (const Node& child : n)
+      {
+        children.push_back(rebuild(child));
+      }
+      res = nm->mkNode(n.getKind(), children);
+    }
+    rebuilt.emplace(n, res);
+    return res;
+  };
+
+  Node booleanFormula = rebuild(fullFormula);
+  // Rewrite the resulting Boolean formula. This folds away constants and
+  // degenerate structure introduced by bit-blasting, which the CnfStream
+  // conversion below does not always handle in nested positions.
+  booleanFormula = rewriter->rewrite(booleanFormula);
+
+  // Tseitin-transform the Boolean formula to CNF, recording all clauses.
+  struct RecordingSatSolver : public SatSolver
+  {
+    SatVariable d_nextVar = 0;
+    std::vector<SatClause> d_clauses;
+    internal::ClauseId addClause(SatClause& c, bool) override
+    {
+      d_clauses.emplace_back(c.begin(), c.end());
+      return internal::ClauseIdUndef;
+    }
+    internal::ClauseId addXorClause(SatClause& c, bool, bool) override
+    {
+      d_clauses.emplace_back(c.begin(), c.end());
+      return internal::ClauseIdUndef;
+    }
+    SatVariable newVar(bool, bool) override { return d_nextVar++; }
+    SatVariable trueVar() override { return d_nextVar++; }
+    SatVariable falseVar() override { return d_nextVar++; }
+    SatValue solve() override { return SAT_VALUE_UNKNOWN; }
+    SatValue solve(long unsigned&) override { return SAT_VALUE_UNKNOWN; }
+    void interrupt() override {}
+    SatValue value(SatLiteral) override { return SAT_VALUE_UNKNOWN; }
+    SatValue modelValue(SatLiteral) override { return SAT_VALUE_UNKNOWN; }
+    uint32_t getAssertionLevel() const override { return 0; }
+    bool ok() const override { return true; }
+  };
+
+  RecordingSatSolver rss;
+  context::Context c;
+  internal::prop::NullRegistrar reg;
+  CnfStream cs(
+      d_slv->getEnv(), &rss, &reg, &c, FormulaLitPolicy::TRACK_AND_NOTIFY_VAR);
+  cs.convertAndAssert(booleanFormula, false, false);
+
+  std::vector<uint32_t> cnf;
+  for (const SatClause& cl : rss.d_clauses)
+  {
+    for (SatLiteral lit : cl)
+    {
+      int32_t v = static_cast<int32_t>(lit.getSatVariable()) + 1;
+      if (lit.isNegated()) v = -v;
+      cnf.push_back(static_cast<uint32_t>(v));
+    }
+    cnf.push_back(0);
+  }
+
+  uint32_t numVars = rss.d_nextVar;
+
+  // Map each tracked Boolean atom (including individual bits) to its CNF
+  // variable identifier.
+  std::unordered_map<Node, uint32_t> nodeToVar;
+  for (const auto& p : cs.getNodeCache())
+  {
+    SatLiteral lit = p.first;
+    if (!lit.isNegated())
+    {
+      nodeToVar.emplace(p.second,
+                        static_cast<uint32_t>(lit.getSatVariable()) + 1);
+    }
+  }
+
+  // The sampling set: the bits of the projection variables. Bits that never
+  // occur in a clause are assigned fresh free variables so a projected counter
+  // accounts for them as unconstrained.
+  std::vector<uint32_t> samplingVars;
+  for (const Term& var : projectionVars)
+  {
+    Node vnode = var.getNode();
+    if (!vnode.getType().isBitVector()) continue;
+    uint32_t width = bv::utils::getSize(vnode);
+    for (uint32_t i = 0; i < width; ++i)
+    {
+      Node bit = bv::utils::mkBit(vnode, i);
+      auto it = nodeToVar.find(bit);
+      samplingVars.push_back(it != nodeToVar.end() ? it->second : ++numVars);
+    }
+  }
+
+  return {cnf, numVars, samplingVars};
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
 void Solver::push(uint32_t nscopes) const
 {
   CVC5_API_TRY_CATCH_BEGIN;
@@ -8669,6 +9123,27 @@ std::string Solver::getLogic() const
       << "invalid call to 'getLogic', logic has not yet been set";
   //////// all checks before this line
   return d_slv->getUserLogicInfo().getLogicString();
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+bool Solver::hasCadicalXorSupport() const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  //////// all checks before this line
+  return internal::Configuration::isBuiltWithCadicalXor();
+  ////////
+  CVC5_API_TRY_CATCH_END;
+}
+
+void Solver::setSatUseNativeXor(bool useNative) const
+{
+  CVC5_API_TRY_CATCH_BEGIN;
+  CVC5_API_CHECK(!d_slv->isFullyInited())
+      << "invalid call to 'setSatUseNativeXor', solver is already fully"
+      << " initialized";
+  //////// all checks before this line
+  d_slv->setOption("sat-use-native-xor", useNative ? "true" : "false", true);
   ////////
   CVC5_API_TRY_CATCH_END;
 }

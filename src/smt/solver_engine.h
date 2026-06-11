@@ -330,8 +330,17 @@ class CVC5_EXPORT SolverEngine
    * be included in the unsat core when applicable.
    *
    * @throw TypeCheckingException, LogicException
-   */
+  */
   void assertFormula(const Node& formula);
+  /** Assert a native XOR clause. */
+  void assertXorClause(const std::vector<Node>& clause, bool rhs);
+  /** Assert a linear-over-Z_p (prime hash) row; see Solver::assertModpClause. */
+  void assertModpClause(const std::vector<Node>& clause,
+                        const std::vector<uint64_t>& weights,
+                        uint64_t rhs,
+                        uint64_t modulus);
+  /** Enable verbose logging for native XOR clauses. */
+  void setXorAssertionVerbose(bool enabled);
 
   /**
    * Assert a formula (if provided) to the current context and call
@@ -475,6 +484,10 @@ class CVC5_EXPORT SolverEngine
    * of type T.
    */
   void declarePool(const Node& p, const std::vector<Node>& initValue);
+  /** Declare projection variable. */
+  void declareProjVar(const Node& v);
+  /** Declare weight for variable. */
+  void declareWeight(const Node& v, uint32_t weight);
 
   /**
    * Add an oracle function to the state, also adds an oracle interface

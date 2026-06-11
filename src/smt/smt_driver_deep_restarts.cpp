@@ -17,6 +17,7 @@
 
 #include <cvc5/cvc5_types.h>
 
+#include "base/check.h"
 #include "options/base_options.h"
 #include "prop/prop_engine.h"
 #include "smt/env.h"
@@ -62,9 +63,21 @@ void SmtDriverDeepRestarts::getNextAssertions(
     // here.
     Assertions& as = d_smt.getAssertions();
     const context::CDList<Node>& al = as.getAssertionList();
-    for (const Node& a : al)
+    const context::CDList<bool>& isXor = as.getAssertionIsXorList();
+    const context::CDList<XorClause>& xorList = as.getXorAssertionList();
+    size_t xorIndex = 0;
+    for (size_t i = 0, n = al.size(); i < n; ++i)
     {
-      ap.push_back(a, true);
+      if (isXor[i])
+      {
+        Assert(xorIndex < xorList.size());
+        ap.addXorClause(xorList[xorIndex]);
+        ++xorIndex;
+      }
+      else
+      {
+        ap.push_back(al[i], true);
+      }
     }
     d_firstTime = false;
     return;
@@ -73,9 +86,23 @@ void SmtDriverDeepRestarts::getNextAssertions(
                         << " zero level learned literals" << std::endl;
   // Copy the preprocessed assertions and skolem map information directly
   const context::CDList<Node>& ppAssertions = d_smt.getPreprocessedAssertions();
-  for (const Node& a : ppAssertions)
+  const context::CDList<bool>& ppIsXor =
+      d_smt.getPreprocessedAssertionIsXorList();
+  const context::CDList<XorClause>& ppXorClauses =
+      d_smt.getPreprocessedXorClauses();
+  size_t xorIndex = 0;
+  for (size_t i = 0, n = ppAssertions.size(); i < n; ++i)
   {
-    ap.push_back(a);
+    if (ppIsXor[i])
+    {
+      Assert(xorIndex < ppXorClauses.size());
+      ap.addXorClause(ppXorClauses[xorIndex]);
+      ++xorIndex;
+    }
+    else
+    {
+      ap.push_back(ppAssertions[i]);
+    }
   }
   preprocessing::IteSkolemMap& ismr = ap.getIteSkolemMap();
   const context::CDHashMap<size_t, Node>& ppSkolemMap =

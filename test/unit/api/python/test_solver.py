@@ -38,6 +38,17 @@ def test_recoverable_exception(tm, solver):
         c = solver.getValue(x)
 
 
+def test_assert_xor_clause(tm, solver):
+    boolSort = solver.getBooleanSort()
+    a = tm.mkConst(boolSort, "a")
+    b = tm.mkConst(boolSort, "b")
+    solver.setXorAssertionVerbose(True)
+    solver.assertXorClause([a, b], True)
+    solver.assertFormula(a.eqTerm(b))
+    assert solver.checkSat().isUnsat()
+    solver.setXorAssertionVerbose(False)
+
+
 def test_declare_fun_fresh(tm, solver):
     boolSort = tm.getBooleanSort()
     intSort = tm.getIntegerSort()

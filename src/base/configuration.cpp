@@ -219,6 +219,8 @@ bool Configuration::isBuiltWithCryptominisat() {
   return IS_CRYPTOMINISAT_BUILD;
 }
 
+bool Configuration::isBuiltWithCadicalXor() { return IS_CADICAL_XOR_BUILD; }
+
 bool Configuration::isBuiltWithKissat() { return IS_KISSAT_BUILD; }
 
 bool Configuration::isBuiltWithEditline() { return IS_EDITLINE_BUILD; }

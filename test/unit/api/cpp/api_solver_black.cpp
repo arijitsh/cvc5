@@ -18,7 +18,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
+#include "base/configuration.h"
 #include "base/output.h"
 #include "test_api.h"
 
@@ -187,6 +189,52 @@ TEST_F(TestApiBlackSolver, assertFormula)
   TermManager tm;
   Solver slv(tm);
   ASSERT_THROW(slv.assertFormula(d_tm.mkTrue()), CVC5ApiException);
+}
+
+TEST_F(TestApiBlackSolver, assertXorClause)
+{
+  TermManager tm;
+  Solver slv(tm);
+  Sort boolSort = slv.getBooleanSort();
+  Term a = slv.mkConst(boolSort, "a");
+  Term b = slv.mkConst(boolSort, "b");
+  std::vector<Term> terms{a, b};
+  ASSERT_NO_THROW(slv.setXorAssertionVerbose(true));
+  ASSERT_NO_THROW(slv.assertXorClause(terms, true));
+  slv.assertFormula(slv.mkTerm(Kind::EQUAL, a, b));
+  ASSERT_EQ(slv.checkSat().getStatus(), Result::Status::UNSAT);
+  ASSERT_NO_THROW(slv.setXorAssertionVerbose(false));
+}
+
+TEST_F(TestApiBlackSolver, assertXorClausePushPop)
+{
+  TermManager tm;
+  Solver slv(tm);
+  slv.setOption("incremental", "true");
+  slv.setOption("produce-models", "true");
+  Sort boolSort = slv.getBooleanSort();
+  Term a = slv.mkConst(boolSort, "a");
+  Term b = slv.mkConst(boolSort, "b");
+
+  slv.assertFormula(a);
+
+  slv.push();
+  slv.assertXorClause({a, b}, true);
+  Result r1 = slv.checkSat();
+  ASSERT_EQ(r1.getStatus(), Result::Status::SAT);
+  ASSERT_EQ(slv.getValue(b), slv.mkFalse());
+  slv.pop();
+
+  slv.push();
+  slv.assertXorClause({a, b}, false);
+  Result r2 = slv.checkSat();
+  ASSERT_EQ(r2.getStatus(), Result::Status::SAT);
+  ASSERT_EQ(slv.getValue(b), slv.mkTrue());
+  slv.pop();
+
+  slv.assertFormula(b);
+  Result r3 = slv.checkSat();
+  ASSERT_EQ(r3.getStatus(), Result::Status::SAT);
 }
 
 TEST_F(TestApiBlackSolver, checkSat)
@@ -2633,6 +2681,21 @@ TEST_F(TestApiBlackSolver, multipleSolvers)
     Term value3 = s3.getValue(function2);
     ASSERT_EQ(value1, value3);
   }
+}
+
+TEST_F(TestApiBlackSolver, cadicalXorSupportMatchesConfiguration)
+{
+  EXPECT_EQ(d_solver->hasCadicalXorSupport(),
+            Configuration::isBuiltWithCadicalXor());
+}
+
+TEST_F(TestApiBlackSolver, satUseNativeXorOptionSetter)
+{
+  EXPECT_EQ(d_solver->getOption("sat-use-native-xor"), "true");
+  ASSERT_NO_THROW(d_solver->setSatUseNativeXor(false));
+  EXPECT_EQ(d_solver->getOption("sat-use-native-xor"), "false");
+  ASSERT_NO_THROW(d_solver->setSatUseNativeXor(true));
+  EXPECT_EQ(d_solver->getOption("sat-use-native-xor"), "true");
 }
 
 #ifdef CVC5_USE_COCOA

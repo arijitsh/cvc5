@@ -15,6 +15,8 @@
 
 #include "test_api.h"
 
+#include <vector>
+
 namespace cvc5::internal {
 
 namespace test {
@@ -472,6 +474,14 @@ TEST_F(TestApiBlackTerm, xorTerm)
   ASSERT_THROW(p_f_x.xorTerm(sum), CVC5ApiException);
   ASSERT_NO_THROW(p_f_x.xorTerm(p_0));
   ASSERT_NO_THROW(p_f_x.xorTerm(p_f_x));
+
+  ASSERT_NO_THROW(b.xorTerm(std::vector<Term>{b}));
+  ASSERT_NO_THROW(b.xorTerm(std::vector<Term>{b, b}));
+  ASSERT_NO_THROW(b.xorTerm(std::vector<Term>{b, p_0}));
+  ASSERT_THROW(b.xorTerm(std::vector<Term>{x}), CVC5ApiException);
+  ASSERT_THROW(b.xorTerm(std::vector<Term>{zero}), CVC5ApiException);
+  ASSERT_NO_THROW(p_0.xorTerm(std::vector<Term>{b}));
+  ASSERT_THROW(p_0.xorTerm(std::vector<Term>{x}), CVC5ApiException);
 }
 
 TEST_F(TestApiBlackTerm, eqTerm)

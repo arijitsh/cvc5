@@ -15,6 +15,14 @@ name   = "SAT Layer"
   name = "cadical"
 
 [[option]]
+  name       = "satUseNativeXor"
+  category   = "expert"
+  long       = "sat-use-native-xor"
+  type       = "bool"
+  default    = "true"
+  help       = "use native XOR support in the SAT solver when available"
+
+[[option]]
   name       = "satRandomFreq"
   alias      = ["random-frequency"]
   category   = "expert"

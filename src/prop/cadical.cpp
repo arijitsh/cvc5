@@ -19,12 +19,14 @@
 
 #include <cadical/cadical.hpp>
 #include <cadical/tracer.hpp>
+#include <cstdint>
 #include <deque>
 
 #include "base/check.h"
 #include "options/base_options.h"
 #include "options/main_options.h"
 #include "options/proof_options.h"
+#include "prop/modp_gauss.h"
 #include "prop/sat_solver_types.h"
 #include "prop/theory_proxy.h"
 #include "util/resource_manager.h"
@@ -41,6 +43,12 @@ using CadicalVar = int;
 
 // helper functions
 namespace {
+
+#ifdef CVC5_CADICAL_HAS_XOR
+constexpr bool s_hasAddXor = true;
+#else
+constexpr bool s_hasAddXor = false;
+#endif
 
 SatValue toSatValue(int result)
 {
@@ -258,6 +266,12 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator,
       auto& info = d_var_info[var];
       Trace("cadical::propagator") << "unassign: " << var << std::endl;
       info.assignment = 0;
+      // --cvcxor: a GJ-propagated variable that gets unassigned must drop its
+      // stored reason (it will be re-derived if propagated again).
+      if (!d_gauss_reason.empty())
+      {
+        d_gauss_reason.erase(var);
+      }
     }
 
     // Notify theory proxy about backtrack
@@ -373,6 +387,50 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator,
       d_new_clauses.push_back(0);
       return false;
     }
+    // --cvcxor: reject any full model that violates a parity (XOR) row. The
+    // conflict goes out through the same external-clause channel as theory
+    // conflicts, so CaDiCaL performs sound conflict analysis / backjumping on
+    // it (this is the channel that avoids the two-propagator fight we get when
+    // a second Gaussian engine lives inside CaDiCaL core).
+    if (has_parity_rows())
+    {
+      SatClause pconf;
+      if (gauss_conflict(pconf))
+      {
+        Trace("cadical::propagator")
+            << "cvcxor: parity conflict, size " << pconf.size() << std::endl;
+        if (getenv("CVC5_XOR_GAUSS_DEBUG"))
+        {
+          static uint64_t nconf = 0;
+          if (++nconf % 1000 == 1)
+            std::cerr << "[cvcxor] parity conflicts fired=" << nconf
+                      << " (size " << pconf.size() << ")" << std::endl;
+        }
+        add_clause(pconf);
+        return false;
+      }
+    }
+
+    // --hash prime-gj: reject any full model that violates a mod-p row.
+    if (has_modp_rows())
+    {
+      SatClause mconf;
+      if (modp_conflict(mconf))
+      {
+        Trace("cadical::propagator")
+            << "prime-gj: mod-p conflict, size " << mconf.size() << std::endl;
+        if (getenv("CVC5_MODP_GAUSS_DEBUG"))
+        {
+          static uint64_t nconf = 0;
+          if (++nconf % 1000 == 1)
+            std::cerr << "[prime-gj] mod-p conflicts fired=" << nconf
+                      << " (size " << mconf.size() << ")" << std::endl;
+        }
+        add_clause(mconf);
+        return false;
+      }
+    }
+
     bool res = done();
     Trace("cadical::propagator")
         << "cb::check_found_model end: done: " << res << std::endl;
@@ -472,6 +530,16 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator,
       }
       d_proxy->theoryCheck(theory::Theory::Effort::EFFORT_STANDARD);
       theory_propagate();
+      // --cvcxor: add Gauss-Jordan parity propagations to the same queue.
+      if (has_parity_rows() && getenv("CVC5_XOR_GAUSS_PROP"))
+      {
+        gauss_propagate();
+      }
+      // --hash prime-gj: add Z_p Gauss-Jordan propagations to the same queue.
+      if (has_modp_rows() && getenv("CVC5_MODP_GAUSS_PROP"))
+      {
+        modp_propagate();
+      }
     }
     return next_propagation();
   }
@@ -492,7 +560,17 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator,
       Assert(d_reason.empty());
       SatLiteral slit = toSatLiteral(propagated_lit);
       SatClause clause;
-      d_proxy->explainPropagation(slit, clause);
+      // --cvcxor: if this literal was propagated by Gauss-Jordan, serve the
+      // stored reduced-row reason instead of asking the theory.
+      auto git = d_gauss_reason.find(slit.getSatVariable());
+      if (git != d_gauss_reason.end())
+      {
+        clause = git->second;
+      }
+      else
+      {
+        d_proxy->explainPropagation(slit, clause);
+      }
       // Add activation literal to reason
       SatLiteral alit = current_activation_lit();
       if (alit != undefSatLiteral)
@@ -635,6 +713,280 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator,
         d_solver.add(0);
       }
     }
+  }
+
+  /**
+   * --cvcxor: register a parity (XOR) row to be solved by Gauss-Jordan inside
+   * this propagator. 'clause' carries the SAT literals of the parity; literal
+   * signs are folded into the parity so the stored row is over plain variables.
+   */
+  void add_parity_row(const SatClause& clause, bool rhs)
+  {
+    ParityRow row;
+    row.rhs = rhs;
+    for (const SatLiteral& lit : clause)
+    {
+      // A negated literal flips the required parity; store positive variables.
+      if (lit.isNegated())
+      {
+        row.rhs = !row.rhs;
+      }
+      row.vars.push_back(lit.getSatVariable());
+    }
+    d_parity_rows.push_back(std::move(row));
+  }
+
+  /** @return whether any parity rows are registered (i.e. --cvcxor is active). */
+  bool has_parity_rows() const { return !d_parity_rows.empty(); }
+
+  /**
+   * --cvcxor conflict check: scan the parity rows for one that is fully
+   * assigned yet violated (XOR of assigned values != rhs). If found, build the
+   * all-falsified conflict clause (negation of the current assignment of the
+   * row's variables) and return true.
+   */
+  bool gauss_conflict(SatClause& conflict) const
+  {
+    for (const ParityRow& row : d_parity_rows)
+    {
+      bool parity = row.rhs;
+      bool all_assigned = true;
+      for (SatVariable v : row.vars)
+      {
+        int32_t a = d_var_info[v].assignment;
+        if (a == 0)
+        {
+          all_assigned = false;
+          break;
+        }
+        if (a > 0)
+        {
+          parity = !parity;  // variable is true: contributes 1 to the XOR
+        }
+      }
+      // Violated iff fully assigned and the XOR of the values differs from rhs.
+      if (all_assigned && parity)
+      {
+        conflict.clear();
+        for (SatVariable v : row.vars)
+        {
+          int32_t a = d_var_info[v].assignment;
+          // Emit the literal that is currently FALSE so the whole clause is
+          // falsified: variable true -> ~v, variable false -> v.
+          conflict.push_back(SatLiteral(v, a > 0));
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * --cvcxor Gauss-Jordan propagation. Eliminates over the currently unassigned
+   * columns of the parity system; for every reduced row left with exactly one
+   * unassigned variable, queues that variable's forced value as a propagation
+   * (with the reduced row as its reason in d_gauss_reason).
+   *
+   * Crucially this goes through the SAME external-propagation channel that
+   * theory propagation uses (d_propagations -> cb_propagate ->
+   * cb_add_reason_clause_lit): CaDiCaL assigns the literal, tracks the external
+   * reason, and performs sound conflict analysis / backjumping on it. This is
+   * why it terminates where the in-CaDiCaL-core port did not -- that one called
+   * search_assign directly with hand-built reason clauses, bypassing the
+   * accounting that integrates external propagation with CDCL.
+   */
+  void gauss_propagate()
+  {
+    if (d_parity_rows.empty())
+    {
+      return;
+    }
+    // Assign a dense column index to every variable that occurs in some row.
+    std::unordered_map<SatVariable, int> col_of;
+    std::vector<SatVariable> var_of_col;
+    for (const ParityRow& row : d_parity_rows)
+    {
+      for (SatVariable v : row.vars)
+      {
+        if (col_of.find(v) == col_of.end())
+        {
+          col_of[v] = static_cast<int>(var_of_col.size());
+          var_of_col.push_back(v);
+        }
+      }
+    }
+    const size_t ncols = var_of_col.size();
+    if (ncols == 0)
+    {
+      return;
+    }
+    const size_t nrows = d_parity_rows.size();
+    const size_t words = (ncols + 63) / 64;
+
+    std::vector<uint64_t> mat(nrows * words, 0);
+    std::vector<char> rrhs(nrows, 0);
+    for (size_t r = 0; r < nrows; ++r)
+    {
+      uint64_t* mr = &mat[r * words];
+      for (SatVariable v : d_parity_rows[r].vars)
+      {
+        int c = col_of[v];
+        mr[c >> 6] |= static_cast<uint64_t>(1) << (c & 63);
+      }
+      rrhs[r] = d_parity_rows[r].rhs ? 1 : 0;
+    }
+
+    // Gauss-Jordan over unassigned columns only.
+    std::vector<char> pivoted(nrows, 0);
+    for (size_t c = 0; c < ncols; ++c)
+    {
+      if (d_var_info[var_of_col[c]].assignment != 0)
+      {
+        continue;  // pivot only on currently unassigned columns
+      }
+      const size_t wc = c >> 6;
+      const uint64_t mc = static_cast<uint64_t>(1) << (c & 63);
+      int pr = -1;
+      for (size_t r = 0; r < nrows; ++r)
+      {
+        if (!pivoted[r] && (mat[r * words + wc] & mc))
+        {
+          pr = static_cast<int>(r);
+          break;
+        }
+      }
+      if (pr < 0)
+      {
+        continue;
+      }
+      pivoted[pr] = 1;
+      const uint64_t* prow = &mat[static_cast<size_t>(pr) * words];
+      for (size_t r = 0; r < nrows; ++r)
+      {
+        if (static_cast<int>(r) == pr)
+        {
+          continue;
+        }
+        if (mat[r * words + wc] & mc)
+        {
+          uint64_t* rw = &mat[r * words];
+          for (size_t w = 0; w < words; ++w)
+          {
+            rw[w] ^= prow[w];
+          }
+          rrhs[r] ^= rrhs[pr];
+        }
+      }
+    }
+
+    // Propagate every reduced row with exactly one unassigned variable.
+    for (size_t r = 0; r < nrows; ++r)
+    {
+      const uint64_t* mr = &mat[r * words];
+      int n_un = 0, n_as = 0, eff = rrhs[r];
+      SatVariable uvar = 0;
+      for (size_t w = 0; w < words; ++w)
+      {
+        uint64_t bits = mr[w];
+        while (bits)
+        {
+          int b = __builtin_ctzll(bits);
+          bits &= bits - 1;
+          SatVariable v = var_of_col[(w << 6) + b];
+          int32_t a = d_var_info[v].assignment;
+          if (a == 0)
+          {
+            ++n_un;
+            uvar = v;
+          }
+          else
+          {
+            ++n_as;
+            if (a > 0)
+            {
+              eff ^= 1;  // assigned-true variable contributes 1 to the parity
+            }
+          }
+        }
+      }
+      if (n_un != 1 || n_as < 1)
+      {
+        continue;  // conflicts / global units are handled by gauss_conflict
+      }
+      // uvar must take the value that satisfies parity: eff==1 -> true.
+      SatLiteral forced(uvar, /*negated=*/eff == 0);
+      if (d_var_info[uvar].assignment != 0 || d_gauss_reason.count(uvar))
+      {
+        continue;  // already assigned or already queued
+      }
+      // Reason clause: forced literal plus the falsifying literal of every
+      // assigned variable in the reduced row (all currently false), so the
+      // clause is unit and implies 'forced'.
+      SatClause reason;
+      reason.push_back(forced);
+      for (size_t w = 0; w < words; ++w)
+      {
+        uint64_t bits = mr[w];
+        while (bits)
+        {
+          int b = __builtin_ctzll(bits);
+          bits &= bits - 1;
+          SatVariable v = var_of_col[(w << 6) + b];
+          int32_t a = d_var_info[v].assignment;
+          if (a == 0)
+          {
+            continue;
+          }
+          reason.push_back(SatLiteral(v, a > 0));
+        }
+      }
+      d_propagations.push_back(forced);
+      d_gauss_reason.emplace(uvar, std::move(reason));
+    }
+  }
+
+  /* ===================== prime hash: Z_p Gauss-Jordan ==================== *
+   * The linear-over-Z_p engine itself lives in ModpGaussEngine (prop/
+   * modp_gauss.{h,cpp}); the propagator just supplies the current assignment
+   * and routes the engine's conflicts / unit propagations through the same
+   * external-propagation channel that theory and GF(2) parity propagation use.
+   */
+
+  /** Register a mod-p row (see ModpGaussEngine::addRow). */
+  void add_modp_row(const SatClause& clause,
+                    const std::vector<uint64_t>& weights,
+                    uint64_t rhs,
+                    uint64_t mod)
+  {
+    d_modp.addRow(clause, weights, rhs, mod);
+  }
+
+  /** @return whether any mod-p rows are registered (--hash prime-gj active). */
+  bool has_modp_rows() const { return d_modp.hasRows(); }
+
+  /** Variable assignment as the engine expects it: 0 / >0 / <0. */
+  int32_t modp_value(SatVariable v) const { return d_var_info[v].assignment; }
+
+  /** prime-gj conflict check at a (possibly full) assignment. */
+  bool modp_conflict(SatClause& conflict) const
+  {
+    return d_modp.findConflict(
+        [this](SatVariable v) { return modp_value(v); }, conflict);
+  }
+
+  /** prime-gj Gauss-Jordan unit propagation into the shared queues. */
+  void modp_propagate()
+  {
+    d_modp.propagate(
+        [this](SatVariable v) { return modp_value(v); },
+        [this](SatVariable v) {
+          return d_var_info[v].assignment != 0 || d_gauss_reason.count(v) != 0;
+        },
+        [this](SatLiteral forced, SatClause&& reason) {
+          d_propagations.push_back(forced);
+          d_gauss_reason.emplace(forced.getSatVariable(), std::move(reason));
+        },
+        [this](SatClause&& conflict) { add_clause(conflict); });
   }
 
   /**
@@ -1003,6 +1355,44 @@ class CadicalPropagator : public CaDiCaL::ExternalPropagator,
   /** Reason storage to process current reason in cb_add_reason_clause_lit(). */
   std::deque<SatLiteral> d_reason;
 
+  /**
+   * --cvcxor: parity (XOR) rows solved by Gauss-Jordan inside this single
+   * propagator instead of being handed to CaDiCaL's native XOR engine. Folding
+   * the parity reasoning into the same propagator that runs theory propagation
+   * means there is ONE propagator (theory + parity share it), and the parity
+   * conflicts/propagations are emitted through the same sound external-clause
+   * channel that theory lemmas use.
+   *
+   * Each row is the set of SAT variables in the parity together with the
+   * required parity 'rhs' (XOR of the variables' truth values must equal rhs).
+   */
+  struct ParityRow
+  {
+    std::vector<SatVariable> vars;
+    bool rhs;
+  };
+  std::vector<ParityRow> d_parity_rows;
+
+  /**
+   * --hash prime-gj: the incremental Z_p Gauss-Jordan engine that solves the
+   * prime-hash rows (sum_i a_i b_i == c mod p). The propagator owns it and
+   * drives it through the wrappers above (add_modp_row / has_modp_rows /
+   * modp_conflict / modp_propagate). Generalises the GF(2) parity engine.
+   */
+  ModpGaussEngine d_modp;
+
+  /**
+   * --cvcxor GJ propagation: reason clause for each variable that was forced by
+   * Gauss-Jordan propagation. Keyed by the forced variable. Unlike theory
+   * literals (which re-derive their explanation on demand via
+   * explainPropagation), a GJ propagation's reason is a *reduced* row (an XOR
+   * combination of original rows) that we cannot cheaply recompute, so we store
+   * it and drop it when the variable is unassigned in notify_backtrack(). The
+   * clause is [forced_lit, falsifying-lits-of-the-row's-other-vars], i.e. a
+   * proper reason clause containing the propagated literal.
+   */
+  std::unordered_map<SatVariable, SatClause> d_gauss_reason;
+
   bool d_found_solution = false;
 
   /** Flag indicating if SAT solver is in search(). */
@@ -1078,7 +1468,7 @@ class ProofTracer : public CaDiCaL::Tracer
     d_antecedents.emplace_back();  // clauses start with id 1
   }
 
-  void add_original_clause(uint64_t clause_id,
+  void add_original_clause(int64_t clause_id,
                            bool redundant,
                            const std::vector<int>& clause,
                            bool restored) override
@@ -1101,10 +1491,10 @@ class ProofTracer : public CaDiCaL::Tracer
     }
   }
 
-  void add_derived_clause(uint64_t clause_id,
+  void add_derived_clause(int64_t clause_id,
                           bool redundant,
                           const std::vector<int>& clause,
-                          const std::vector<uint64_t>& antecedents) override
+                          const std::vector<int64_t>& antecedents) override
   {
     Assert(d_antecedents.size() == clause_id);
     (void)clause;
@@ -1114,9 +1504,9 @@ class ProofTracer : public CaDiCaL::Tracer
     d_antecedents.emplace_back(antecedents);
   }
 
-  void add_assumption_clause(uint64_t clause_id,
+  void add_assumption_clause(int64_t clause_id,
                              const std::vector<int>& clause,
-                             const std::vector<uint64_t>& antecedents) override
+                             const std::vector<int64_t>& antecedents) override
   {
     Assert(d_antecedents.size() == clause_id);
     // Assumption clauses are the negation of the core of failed/unsat
@@ -1137,7 +1527,7 @@ class ProofTracer : public CaDiCaL::Tracer
   }
 
   void conclude_unsat(CaDiCaL::ConclusionType type,
-                      const std::vector<uint64_t>& clause_ids) override
+                      const std::vector<int64_t>& clause_ids) override
   {
     // Store final clause ids that concluded unsat.
     d_final_clauses = clause_ids;
@@ -1146,25 +1536,26 @@ class ProofTracer : public CaDiCaL::Tracer
   void compute_unsat_core(std::vector<SatClause>& unsat_core,
                           bool include_theory_lemmas = true) const
   {
-    std::vector<uint64_t> core;
-    std::vector<uint64_t> visit{d_final_clauses};
+    std::vector<int64_t> core;
+    std::vector<int64_t> visit{d_final_clauses};
     std::vector<bool> visited(d_antecedents.size() + 1, false);
 
     // Trace back from final clause ids (empty clause) to original clauses.
     while (!visit.empty())
     {
-      const uint64_t clause_id = visit.back();
+      const int64_t clause_id = visit.back();
       visit.pop_back();
 
-      if (!visited[clause_id])
+      const size_t cid = static_cast<size_t>(clause_id);
+      if (!visited[cid])
       {
-        visited[clause_id] = true;
+        visited[cid] = true;
         if (d_orig_clauses.find(clause_id) != d_orig_clauses.end())
         {
           core.push_back(clause_id);
         }
-        Assert(clause_id < d_antecedents.size());
-        const auto& antecedents = d_antecedents[clause_id];
+        Assert(cid < d_antecedents.size());
+        const auto& antecedents = d_antecedents[cid];
         visit.insert(visit.end(), antecedents.begin(), antecedents.end());
       }
     }
@@ -1182,7 +1573,7 @@ class ProofTracer : public CaDiCaL::Tracer
 
     // Get the core in terms of SatClause/SatLiteral, filters out activation
     // literals.
-    for (const uint64_t cid : core)
+    for (const int64_t cid : core)
     {
       const auto& [clause, ctype] = d_orig_clauses.at(cid);
 
@@ -1246,12 +1637,12 @@ class ProofTracer : public CaDiCaL::Tracer
  private:
   const CadicalPropagator& d_propagator;
   // Maps clause id to its antecedents.
-  std::vector<std::vector<uint64_t>> d_antecedents;
+  std::vector<std::vector<int64_t>> d_antecedents;
   // Maps original clause ids to their literals and clause type.
-  std::unordered_map<uint64_t, std::pair<std::vector<int>, ClauseType>>
+  std::unordered_map<int64_t, std::pair<std::vector<int>, ClauseType>>
       d_orig_clauses;
   // Stores the final clause ids used to conclude unsat.
-  std::vector<uint64_t> d_final_clauses;
+  std::vector<int64_t> d_final_clauses;
 };
 
 class ClauseLearner : public CaDiCaL::Learner
@@ -1445,19 +1836,23 @@ SatValue CadicalSolver::_solve(const std::vector<SatLiteral>& assumptions)
 
 ClauseId CadicalSolver::addClause(SatClause& clause, bool removable)
 {
-  if (d_propagator && TraceIsOn("cadical::propagator"))
+  if (d_xorClauseVerbose)
   {
     Trace("cadical::propagator") << "addClause (" << removable << "):";
+    // std::cout << "c addClause:";
     SatLiteral alit = d_propagator->current_activation_lit();
     if (alit != undefSatLiteral)
     {
       Trace("cadical::propagator") << " " << alit;
+      // std::cout << " " << alit;
     }
     for (const SatLiteral& lit : clause)
     {
       Trace("cadical::propagator") << " " << lit;
+      // std::cout << " " << lit;
     }
     Trace("cadical::propagator") << " 0" << std::endl;
+    // std::cout << " 0" << std::endl;
   }
   if (d_propagator)
   {
@@ -1479,9 +1874,134 @@ ClauseId CadicalSolver::addXorClause(SatClause& clause,
                                      bool rhs,
                                      bool removable)
 {
+#ifndef CVC5_CADICAL_HAS_XOR
   Unreachable() << "CaDiCaL does not support adding XOR clauses.";
-  return 0;
+  return ClauseIdError;
+#else
+  // Emit an XOR constraint to CaDiCaL. The parity (rhs) is folded into the sign
+  // of the final literal: CaDiCaL's add_xor asserts the XOR of the literals is
+  // 1, so negating one literal flips the asserted parity.
+  //
+  // When 'has_guard' is set, 'cl' has the layout [real_lits..., activation,
+  // guard]: every real literal plus the activation literal (which scopes the
+  // constraint for incremental solving) participate in the XOR, and only the
+  // trailing guard literal is dropped. The activation carries the parity.
+  // Without a guard, 'cl' is exactly the real literals and the parity is folded
+  // into the last one.
+  auto addXorToSolver = [&](const SatClause& cl, bool parity, bool has_guard) {
+    if (has_guard)
+    {
+      // real literals occupy indices [0, cl.size()-2); activation is at
+      // cl.size()-2 and the dropped guard at cl.size()-1.
+      const size_t nreals = cl.size() >= 2 ? cl.size() - 2 : 0;
+      for (size_t i = 0; i < nreals; ++i)
+      {
+        d_solver->add_xor(toCadicalLit(cl[i]));
+      }
+      const SatLiteral act = cl[cl.size() - 2];
+      d_solver->add_xor(parity ? -toCadicalLit(act) : toCadicalLit(act));
+    }
+    else if (!cl.empty())
+    {
+      for (size_t i = 0; i + 1 < cl.size(); ++i)
+      {
+        d_solver->add_xor(toCadicalLit(cl[i]));
+      }
+      const SatLiteral last = cl[cl.size() - 1];
+      d_solver->add_xor(parity ? toCadicalLit(last) : -toCadicalLit(last));
+    }
+    d_solver->add_xor(0);
+  };
+
+  auto addEmptyClause = [&]() {
+    d_solver->add(0);
+  };
+
+  SatLiteral activation =
+      d_propagator ? d_propagator->current_activation_lit() : undefSatLiteral;
+
+  if (getenv ("CVC5_XOR_DEBUG"))
+  {
+    std::cerr << "[xorclause] rhs=" << rhs << " activation="
+              << (activation == undefSatLiteral ? std::string ("none")
+                                                : activation.toString ())
+              << " lits:";
+    for (const SatLiteral& lit : clause) std::cerr << " " << lit;
+    std::cerr << std::endl;
+  }
+
+  // NOTE: we intentionally do NOT scope the XOR with an activation/guard
+  // literal. CaDiCaL's Gaussian engine reasons over the XOR's variables: an
+  // activation literal mixed into the equation cannot deactivate it (forcing
+  // the activation only flips the parity), and worse, if the activation stays
+  // unassigned the equation is never "fully assigned" and is silently NOT
+  // enforced (e.g. under theory propagation, where the count stayed saturated
+  // at every hash level). The XOR is emitted as a plain parity over its real
+  // literals; scoping across incremental counts is handled by rebuilding the
+  // counting solver per measurement.
+  (void) activation;
+
+  if (clause.empty())
+  {
+    // Empty XOR is 'false == rhs': unsatisfiable iff rhs is true.
+    if (rhs)
+    {
+      addEmptyClause();
+      ++d_statistics.d_numClauses;
+    }
+    return ClauseIdError;
+  }
+
+  // --cvcxor (CVC5_XOR_GAUSS): instead of handing the parity to CaDiCaL's
+  // native XOR/Gaussian engine, register it as a Gauss-Jordan row inside our
+  // own CadicalPropagator. The propagator already runs theory propagation, so
+  // this keeps a SINGLE propagator doing theory + parity (no second Gaussian
+  // engine inside CaDiCaL core fighting the external theory propagator), and
+  // the parity conflicts/propagations are emitted through the propagator's
+  // sound external-clause channel.
+  if (d_propagator && getenv("CVC5_XOR_GAUSS"))
+  {
+    if (getenv("CVC5_XOR_GAUSS_DEBUG"))
+    {
+      std::cerr << "[cvcxor] add_parity_row size=" << clause.size()
+                << " rhs=" << rhs << std::endl;
+    }
+    d_propagator->add_parity_row(clause, rhs);
+    ++d_statistics.d_numClauses;
+    return ClauseIdError;
+  }
+
+  addXorToSolver(clause, rhs, /*has_guard=*/false);
+  ++d_statistics.d_numClauses;
+  return ClauseIdError;
+#endif
 }
+
+void CadicalSolver::addModpClause(SatClause& clause,
+                                  const std::vector<uint64_t>& weights,
+                                  uint64_t rhs,
+                                  uint64_t modulus)
+{
+  // The prime hash is enforced by the propagator's Z_p Gauss-Jordan engine, not
+  // bit-blasted: register the row instead of adding any CNF. Requires the cvc5
+  // propagator (CDCL(T) mode); without it the constraint cannot be enforced.
+  Assert(d_propagator != nullptr)
+      << "addModpClause requires the CaDiCaL propagator (CDCL(T) mode).";
+  if (getenv("CVC5_MODP_GAUSS_DEBUG"))
+  {
+    std::cerr << "[prime-gj] add_modp_row size=" << clause.size()
+              << " rhs=" << rhs << " mod=" << modulus << std::endl;
+  }
+  d_propagator->add_modp_row(clause, weights, rhs, modulus);
+  ++d_statistics.d_numClauses;
+}
+
+void CadicalSolver::setXorClauseVerbose(bool enabled)
+{
+  d_xorClauseVerbose = enabled;
+}
+
+bool CadicalSolver::nativeXor() { return s_hasAddXor; }
 
 SatVariable CadicalSolver::newVar(bool isTheoryAtom, bool canErase)
 {

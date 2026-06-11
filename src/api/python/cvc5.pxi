@@ -3329,6 +3329,26 @@ cdef class Solver:
         """
         self.csolver.assertFormula(term.cterm)
 
+    def assertXorClause(self, terms, rhs):
+        """
+            Assert that the XOR of the given Boolean terms equals ``rhs``.
+
+            :param terms: Iterable of Boolean terms forming the XOR clause.
+            :param rhs:   Boolean value on the right-hand side of the XOR.
+        """
+        cdef vector[c_Term] v
+        for term in terms:
+            v.push_back((<Term?> term).cterm)
+        self.csolver.assertXorClause(<const vector[c_Term]&> v, <bint> rhs)
+
+    def setXorAssertionVerbose(self, enabled):
+        """
+            Enable or disable verbose logging for native XOR clauses.
+
+            :param enabled: ``True`` to print forwarded XOR clauses.
+        """
+        self.csolver.setXorAssertionVerbose(<bint> enabled)
+
     def checkSat(self):
         """
             Check satisfiability.
@@ -5600,14 +5620,19 @@ cdef class Term:
         """
         return _term(self.tm, self.cterm.orTerm(t.cterm))
 
-    def xorTerm(self, Term t):
+    def xorTerm(self, term_or_list):
         """
            Boolean exclusive or.
 
-           :param t: A Boolean term.
-           :return: The exclusive disjunction of this term and the given term.
+           :param term_or_list: A Boolean term or a list of Boolean terms.
+           :return: The exclusive disjunction of this term and the given term(s).
         """
-        return _term(self.tm, self.cterm.xorTerm(t.cterm))
+        if isinstance(term_or_list, list):
+            cdef vector[c_Term] cterms
+            for term in term_or_list:
+                cterms.push_back((<Term?> term).cterm)
+            return _term(self.tm, self.cterm.xorTerm(cterms))
+        return _term(self.tm, self.cterm.xorTerm((<Term?> term_or_list).cterm))
 
     def eqTerm(self, Term t):
         """

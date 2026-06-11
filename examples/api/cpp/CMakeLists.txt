@@ -28,6 +28,7 @@ set(CVC5_EXAMPLES_API_CPP
   parser
   parser_sym_manager
   uf
+  boolean_cnf
 )
 
 foreach(example ${CVC5_EXAMPLES_API_CPP})

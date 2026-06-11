@@ -96,6 +96,12 @@ namespace cvc5::internal {
 #  define IS_CRYPTOMINISAT_BUILD false
 #endif /* CVC5_USE_CRYPTOMINISAT */
 
+#ifdef CVC5_CADICAL_HAS_XOR
+#  define IS_CADICAL_XOR_BUILD true
+#else /* CVC5_CADICAL_HAS_XOR */
+#  define IS_CADICAL_XOR_BUILD false
+#endif /* CVC5_CADICAL_HAS_XOR */
+
 #if CVC5_USE_KISSAT
 #define IS_KISSAT_BUILD true
 #else /* CVC5_USE_KISSAT */

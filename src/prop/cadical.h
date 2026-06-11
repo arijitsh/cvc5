@@ -49,6 +49,15 @@ class CadicalSolver : public CDCLTSatSolver, protected EnvObj
 
   ClauseId addXorClause(SatClause& clause, bool rhs, bool removable) override;
 
+  void addModpClause(SatClause& clause,
+                     const std::vector<uint64_t>& weights,
+                     uint64_t rhs,
+                     uint64_t modulus) override;
+
+  void setXorClauseVerbose(bool enabled) override;
+
+  bool nativeXor() override;
+
   SatVariable newVar(bool isTheoryAtom = false, bool canErase = true) override;
 
   SatVariable trueVar() override;
@@ -154,6 +163,8 @@ class CadicalSolver : public CDCLTSatSolver, protected EnvObj
   SatVariable d_true;
   /** The variable representing false. */
   SatVariable d_false;
+  /** Whether XOR clauses should be printed when forwarded to CaDiCaL. */
+  bool d_xorClauseVerbose = false;
 
   struct Statistics
   {

@@ -50,6 +50,8 @@ SmtSolver::SmtSolver(Env& env, SolverEngineStatistics& stats)
       d_theoryEngine(nullptr),
       d_propEngine(nullptr),
       d_ppAssertions(userContext()),
+      d_ppAssertionsIsXor(userContext()),
+      d_ppXorClauses(userContext()),
       d_ppSkolemMap(userContext())
 {
 }
@@ -83,6 +85,7 @@ void SmtSolver::finishInit()
    * again by the new PropEngine object */
   d_propEngine.reset(nullptr);
   d_propEngine.reset(new prop::PropEngine(d_env, d_theoryEngine.get()));
+  d_propEngine->setXorClauseVerbose(d_xorClauseVerbose);
 
   Trace("smt-debug") << "Setting up theory engine..." << std::endl;
   d_theoryEngine->setPropEngine(getPropEngine());
@@ -110,6 +113,7 @@ void SmtSolver::resetAssertions()
    * registered again by the new PropEngine object */
   d_propEngine.reset(nullptr);
   d_propEngine.reset(new prop::PropEngine(d_env, d_theoryEngine.get()));
+  d_propEngine->setXorClauseVerbose(d_xorClauseVerbose);
   d_theoryEngine->setPropEngine(getPropEngine());
   // Notice that we do not reset TheoryEngine, nor does it require calling
   // finishInit again. In particular, TheoryEngine::finishInit does not
@@ -117,6 +121,15 @@ void SmtSolver::resetAssertions()
   d_propEngine->finishInit();
   // must reset the preprocessor as well
   finishInitPreprocessor();
+}
+
+void SmtSolver::setXorClauseVerbose(bool enabled)
+{
+  d_xorClauseVerbose = enabled;
+  if (d_propEngine != nullptr)
+  {
+    d_propEngine->setXorClauseVerbose(enabled);
+  }
 }
 
 void SmtSolver::interrupt()
@@ -162,10 +175,15 @@ void SmtSolver::assertToInternal(preprocessing::AssertionPipeline& ap)
   }
   // get the assertions
   const std::vector<Node>& assertions = ap.ref();
+  const std::vector<XorClause>& xorClauses = ap.getXorClauses();
   preprocessing::IteSkolemMap& ism = ap.getIteSkolemMap();
   // assert to prop engine, which will convert to CNF
   d_env.verbose(2) << "converting to CNF..." << endl;
   d_propEngine->assertInputFormulas(assertions, ism);
+  if (!xorClauses.empty())
+  {
+    d_propEngine->assertInputXorClauses(xorClauses);
+  }
 
   // It is important to distinguish the input assertions from the skolem
   // definitions, as the decision justification heuristic treates the latter
@@ -185,6 +203,13 @@ void SmtSolver::assertToInternal(preprocessing::AssertionPipeline& ap)
     for (const Node& a : assertions)
     {
       d_ppAssertions.push_back(a);
+      d_ppAssertionsIsXor.push_back(false);
+    }
+    for (const XorClause& xc : xorClauses)
+    {
+      d_ppAssertions.push_back(xc.d_formula);
+      d_ppAssertionsIsXor.push_back(true);
+      d_ppXorClauses.push_back(xc);
     }
     for (const std::pair<const size_t, Node>& k : ism)
     {
@@ -202,6 +227,16 @@ void SmtSolver::assertToInternal(preprocessing::AssertionPipeline& ap)
 const context::CDList<Node>& SmtSolver::getPreprocessedAssertions() const
 {
   return d_ppAssertions;
+}
+
+const context::CDList<bool>& SmtSolver::getPreprocessedAssertionIsXorList() const
+{
+  return d_ppAssertionsIsXor;
+}
+
+const context::CDList<XorClause>& SmtSolver::getPreprocessedXorClauses() const
+{
+  return d_ppXorClauses;
 }
 
 const context::CDHashMap<size_t, Node>& SmtSolver::getPreprocessedSkolemMap()

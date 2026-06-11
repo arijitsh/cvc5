@@ -18,6 +18,7 @@
 #include "options/base_options.h"
 #include "options/main_options.h"
 #include "options/smt_options.h"
+#include "base/check.h"
 #include "prop/prop_engine.h"
 #include "smt/context_manager.h"
 #include "smt/env.h"
@@ -154,7 +155,9 @@ void SmtDriver::notifyPostSolve() { d_smt.resetTrail(); }
 SmtDriverSingleCall::SmtDriverSingleCall(Env& env,
                                          SmtSolver& smt,
                                          ContextManager* ctx)
-    : SmtDriver(env, smt, ctx), d_assertionListIndex(userContext(), 0)
+    : SmtDriver(env, smt, ctx),
+      d_assertionListIndex(userContext(), 0),
+      d_xorAssertionListIndex(userContext(), 0)
 {
 }
 
@@ -209,12 +212,25 @@ void SmtDriverSingleCall::getNextAssertions(
 {
   Assertions& as = d_smt.getAssertions();
   const context::CDList<Node>& al = as.getAssertionList();
+  const context::CDList<bool>& isXor = as.getAssertionIsXorList();
+  const context::CDList<XorClause>& xorList = as.getXorAssertionList();
+  size_t xorIndex = d_xorAssertionListIndex.get();
   size_t alsize = al.size();
   for (size_t i = d_assertionListIndex.get(); i < alsize; ++i)
   {
-    ap.push_back(al[i], true);
+    if (isXor[i])
+    {
+      Assert(xorIndex < xorList.size());
+      ap.addXorClause(xorList[xorIndex]);
+      ++xorIndex;
+    }
+    else
+    {
+      ap.push_back(al[i], true);
+    }
   }
   d_assertionListIndex = alsize;
+  d_xorAssertionListIndex = xorIndex;
 }
 
 }  // namespace smt

@@ -260,6 +260,8 @@ libcvc5_add_sources(
   prop/learned_db.h
   prop/lemma_inprocess.cpp
   prop/lemma_inprocess.h
+  prop/modp_gauss.cpp
+  prop/modp_gauss.h
   prop/minisat/core/Dimacs.h
   prop/minisat/core/Solver.cc
   prop/minisat/core/Solver.h
@@ -1533,6 +1535,9 @@ endif()
 add_dependencies(cvc5-obj CaDiCaL)
 target_include_directories(cvc5-obj SYSTEM PRIVATE ${CaDiCaL_INCLUDE_DIR})
 target_link_libraries(cvc5 PRIVATE $<BUILD_INTERFACE:CaDiCaL> $<INSTALL_INTERFACE:cadical>)
+if(CVC5_CADICAL_HAS_XOR)
+  target_compile_definitions(cvc5-obj PRIVATE CVC5_CADICAL_HAS_XOR)
+endif()
 
 if(USE_CLN)
   add_dependencies(cvc5-obj CLN)
